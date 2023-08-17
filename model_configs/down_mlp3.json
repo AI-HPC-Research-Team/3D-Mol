@@ -1,0 +1,7 @@
+{
+    "layer_num": 3,
+    "hidden_size_1": 256,
+    "dropout_rate": 0.2,
+    "act": "leaky_relu",
+    "hidden_size_2": 256
+}
