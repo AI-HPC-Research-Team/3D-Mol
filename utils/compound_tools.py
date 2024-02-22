@@ -462,8 +462,9 @@ class Compound3DKit(object):
                 if cnt > 10:
                     index_1 = 2
                 cnt += 1
-            rms = AllChem.GetConformerRMS(new_mol, int(index), int(index_1), prealigned=True)
-
+            rms = AllChem.GetConformerRMS(new_mol, int(index), int(index_1))
+            whim_fp_0 = np.array(rdMolDescriptors.CalcWHIM(new_mol, confId=int(index)), "float32")
+            whim_fp_1 = np.array(rdMolDescriptors.CalcWHIM(new_mol, confId=int(index_1)), "float32")
             new_mol = Chem.RemoveHs(new_mol)
             energy = res[index][1]
             energy_1 = res[index_1][1]
@@ -488,7 +489,7 @@ class Compound3DKit(object):
         if return_conf:
             a.append(conf)
             a.append(conf_1)
-        return a
+        return a, whim_fp_0, whim_fp_1
 
 
     @staticmethod
@@ -504,7 +505,7 @@ class Compound3DKit(object):
         if return_conf:
             a.append(conf)
             a.append(conf)
-        return a
+        return a, whim_fp_0, whim_fp_1
 
     @staticmethod
     def get_bond_lengths(edges, atom_poses):
@@ -587,6 +588,7 @@ class Compound3DKit(object):
 
 import warnings
 def getdihes_angle_1(data, conf, atom_id_set):
+
     SE = len(atom_id_set)
     super_edge_indices= np.arange(SE)
     dihes_edges = []
@@ -715,7 +717,6 @@ def mol_to_graph_data(mol, total=False, dihes=False, cl=False):
     ### atom features
     for i, atom in enumerate(mol.GetAtoms()):
         if atom.GetAtomicNum() == 0:
-            # print("yes")
             return None
         for name in atom_id_names:
             data[name].append(CompoundKit.get_atom_feature_id(atom, name) + 1)  # 0: OOV
@@ -804,12 +805,9 @@ def mol_to_geognn_graph_data_cl(mol, atom_poses, atom_poses_1, conf, conf_1, dir
 
 def mol_to_geognn_graph_data_MMFF3d_all_cl_conf(mol, total=False, dihes=True):
     """tbd"""
-    if len(mol.GetAtoms()) <= 4000:
-        b = Compound3DKit.get_MMFF_atom_poses_cl(mol, numConfs=10, return_conf=dihes)
-        if b is None:
-            return None
-        mol, rms, atom_poses, atom_poses_1, conf, conf_1 = b
-    else:
-        mol, rms, atom_poses, atom_poses_1, conf, conf_1 = Compound3DKit.get_2d_atom_poses_cl(mol, numConfs=10, return_conf=dihes)
+    b, fp3D, fp3D_1 = Compound3DKit.get_MMFF_atom_poses_cl(mol, numConfs=10, return_conf=dihes)
+    if b is None:
+        return None
+    mol, rms, atom_poses, atom_poses_1, conf, conf_1 = b
     data, data_1 = mol_to_geognn_graph_data_cl(mol, atom_poses, atom_poses_1, conf, conf_1, dir_type='HT', total=total)
-    return data, data_1, rms
+    return data, data_1, rms, fp3D, fp3D_1
