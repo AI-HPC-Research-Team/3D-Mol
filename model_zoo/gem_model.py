@@ -345,7 +345,7 @@ class GeoPredModel_all(nn.Layer):
         if 'Cl' in self.pretrain_tasks:
             sub_losses['Cl_loss'] = self._get_Cl_loss(F.normalize(graph_repr_conf_cl, axis=1),
                                                       F.normalize(masked_graph_repr, axis=1), fp_score,
-                                                      rms=feed_dict["rms_12"])
+                                                      rms=feed_dict["rms"])
         loss = 0
         cnt = 0
 
