@@ -532,10 +532,19 @@ class Compound3DKit(object):
             if angle_temp < -1:
                 angle_temp = -1
             angle = np.arccos(angle_temp)
+
+
+            # with warnings.catch_warnings(record=True) as w:
+            #     angle = np.arccos(np.dot(vec1, vec2))
+            #     if len(w) > 0:
+            #         print(w[0])
+            #         flag = True
+            #         print(vec1, vec2, angle, norm1, norm2, np.dot(vec1, vec2))
             return angle
 
         E = len(edges) - len(atom_poses)
         edges = edges[:-len(atom_poses)]
+        # print(edges)
         edge_indices = np.arange(E)
         super_edges = []
         bond_angles = []
@@ -556,6 +565,8 @@ class Compound3DKit(object):
                 src_vec = atom_poses[src_edge[1]] - atom_poses[src_edge[0]]
                 tar_vec = atom_poses[tar_edge[1]] - atom_poses[tar_edge[0]]
                 super_edges.append([src_edge_i, tar_edge_i])
+                # if src_edge[1] != tar_edge[0]:
+                #     print("error")
                 atom_id_set.append((src_edge[0], src_edge[1], tar_edge[1]))
 
                 if src_edge[1] == tar_edge[0] and src_edge[0] == tar_edge[1]:
