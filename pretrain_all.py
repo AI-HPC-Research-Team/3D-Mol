@@ -20,7 +20,7 @@ import paddle
 from datasets.inmemory_dataset import InMemoryDataset
 from utils.basic_utils import load_json_config
 from featurizers.gem_featurizer import GeoPredTransformFn, GeoPredCollateFn_all_cl
-from model_zoo.gem_model import GeoGNNModel_3_GIN2_all, GeoPredModel_all
+from model_zoo.gem_model import GeoGNNModel_all, GeoPredModel_all
 
 def train(model, optimizer, data_gen):
     model.train()
@@ -126,7 +126,7 @@ def main(args):
                 dataset = dataset[0:1000]
     print("load data Time used:%ss" % (time.time() - s))
 
-    compound_encoder = GeoGNNModel_3_GIN2_all(compound_encoder_config)
+    compound_encoder = GeoGNNModel_all(compound_encoder_config)
     model = GeoPredModel_all(model_config, compound_encoder)
     opt = paddle.optimizer.Adam(learning_rate=args.lr, parameters=model.parameters())
     print('Total param num: %s' % (len(model.parameters())))
