@@ -2,11 +2,10 @@
 
 3D-Mol is an advanced molecular modeling method designed to fully harness the 3D spatial structure of molecules. By deconstructing molecules into three geometric graphs, 3D-Mol effectively extracts 3D features. This approach, combined with the use of contrastive learning from 20M unlabeled data, ensures superior performance in molecular property prediction tasks. The following are the commands for each step.
 
-![alt model frame](./fig/frame.png)
+![alt model frame](./fig/framework.png)
 
 Figure: The overview of the 3D-Mol model framework.
-    a) In the pretraining stage, we employ weighted contrastive learning to effectively pretrain our model. In addition to using the mask strategy for graph data augmentation, we consider conformations from the same SMILES as positive pairs, while the weight represents the conformational similarity. Conversely, distinct topological structures are treated as negative pairs, and we further utilize FP differences to compute the weight of negative pairs. Conversely, distinct topological structures are treated as negative pairs, and the weight is dependent on FP differences. 
-    b) In the finetuning stage, we refine the well-pretrained encoder using diverse downstream datasets, followed by supervised learning.
+    a) In the pretraining stage, we employ weighted contrastive learning to effectively pretrain our model. In addition to using the mask strategy for graph data augmentation, we consider conformations from the same SMILES as positive pairs, while the weight represents their 3D conformation descriptor similarity. Conversely, distinct topological structures are treated as negative pairs, and the weight is dependent on fingerprint differences. b) In the finetuning stage, we use one well-pretrained encoder model to refine our approach across diverse downstream datasets through supervised learning.
 
 ## Install requirements
 
@@ -23,12 +22,13 @@ Pretraining datasets are as follow, you need to download them and put them in ./
 
 Downstream dataset:  [MoleculeNet](https://moleculenet.org/)- stored in `downstream_datasets`, the following are the different dataset in finetune stage.
 
-- bbbp
 - bace
 - tox21
-- clintox
 - sider
 - toxcast
+- esol
+- freesolv
+- lipophilicity
 
 The code for preprocessing and spliting data are stored in ./utils folder, and the code for upload the cached data is stored in ./featurizers. You can preprocess pretraining data by following command, It may cost lots of time, better to process the data in parallel.
 
