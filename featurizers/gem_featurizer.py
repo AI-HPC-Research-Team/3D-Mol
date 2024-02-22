@@ -549,6 +549,14 @@ class GeoPredTransformFn(object):
         return data
 
 
+def cosine_similarity(vec1, vec2):
+    dot_product = np.dot(vec1, vec2)
+    norm_vec1 = np.linalg.norm(vec1)
+    norm_vec2 = np.linalg.norm(vec2)
+    similarity = dot_product / ((norm_vec1 * norm_vec2) + 0.0001)
+    return similarity
+
+
 class GeoPredCollateFn_all_cl(object):
     """tbd"""
 
@@ -619,7 +627,8 @@ class GeoPredCollateFn_all_cl(object):
         for data in batch_data_list:
             N = len(data[self.atom_names[0]])
             E = len(data['edges'])
-            rms_list.append(data['rms'][0])
+            rms = cosine_similarity(data['fp3D'], data['fp3D_1'])
+            rms_list.append(rms)
             mol_list.append(Chem.MolFromSmiles(data['smiles']))
             data['dihes_angle'] = np.nan_to_num(data['dihes_angle'])
             data['dihes_angle' + '_conf_cl'] = np.nan_to_num(data['dihes_angle' + '_conf_cl'])
