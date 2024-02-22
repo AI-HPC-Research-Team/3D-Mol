@@ -241,37 +241,6 @@ class GeoPredModel_all(nn.Layer):
         loss = self.En_loss(logits, feed_dict['eng'])
         return loss
 
-    def _get_Cm_loss_1(self, feed_dict, node_repr, graph):
-        masked_node_repr = paddle.gather(node_repr, feed_dict['Cm_node_i'])
-        node_feat = None
-        for i in ["atomic_num", "formal_charge", "degree", "chiral_tag", "total_numHs", "is_aromatic", "hybridization"]:
-            temps = graph.node_feat[i]
-            if temps.shape[-1] != 1:
-                temps = paddle.unsqueeze(temps, axis=-1)
-            temps = paddle.cast(temps, dtype='float32')
-            if node_feat is None:
-                node_feat = temps
-            else:
-                node_feat = paddle.concat([node_feat, temps], axis=-1)
-        node_feat = paddle.gather(node_feat, feed_dict['Cm_node_i'])
-        loss = 0
-        logits1 = self.Cm1_linear_1(masked_node_repr)
-        loss = loss + self.Cm1_loss_1(logits1, paddle.unsqueeze(node_feat[:, 0], axis=-1))
-        logits2 = self.Cm1_linear_2(masked_node_repr)
-        loss = loss + self.Cm1_loss_2(logits2, paddle.unsqueeze(node_feat[:, 1], axis=-1))
-        logits3 = self.Cm1_linear_3(masked_node_repr)
-        loss = loss + self.Cm1_loss_3(logits3, paddle.unsqueeze(node_feat[:, 2], axis=-1))
-        logits4 = self.Cm1_linear_4(masked_node_repr)
-        loss = loss + self.Cm1_loss_4(logits4, paddle.unsqueeze(node_feat[:, 3], axis=-1))
-        logits5 = self.Cm1_linear_5(masked_node_repr)
-        loss = loss + self.Cm1_loss_5(logits5, paddle.unsqueeze(node_feat[:, 4], axis=-1))
-        logits6 = self.Cm1_linear_6(masked_node_repr)
-        loss = loss + self.Cm1_loss_6(logits6, paddle.unsqueeze(node_feat[:, 5], axis=-1))
-        logits7 = self.Cm1_linear_7(masked_node_repr)
-        loss = loss + self.Cm1_loss_7(logits7, paddle.unsqueeze(node_feat[:, 6], axis=-1))
-
-        return loss
-
     def _get_Fg_loss(self, feed_dict, graph_repr):
         fg_label = paddle.concat([feed_dict['Fg_morgan'], feed_dict['Fg_daylight'], feed_dict['Fg_maccs']], 1)
         logits = self.Fg_linear(graph_repr)
@@ -376,7 +345,7 @@ class GeoPredModel_all(nn.Layer):
         if 'Cl' in self.pretrain_tasks:
             sub_losses['Cl_loss'] = self._get_Cl_loss(F.normalize(graph_repr_conf_cl, axis=1),
                                                       F.normalize(masked_graph_repr, axis=1), fp_score,
-                                                      rms=feed_dict["rms"])
+                                                      rms=feed_dict["rms_12"])
         loss = 0
         cnt = 0
 
