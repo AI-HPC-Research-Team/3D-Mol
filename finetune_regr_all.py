@@ -23,7 +23,7 @@ import numpy as np
 import time
 import paddle
 import paddle.nn as nn
-from model_zoo.gem_model import GeoGNNModel_3_GIN2_all
+from model_zoo.gem_model import GeoGNNModel_all
 from utils.basic_utils import load_json_config
 from datasets.inmemory_dataset import InMemoryDataset
 
@@ -147,7 +147,7 @@ def main(args):
     print('model_config:')
     print(model_config)
 
-    compound_encoder = GeoGNNModel_3_GIN2_all(compound_encoder_config)
+    compound_encoder = GeoGNNModel_all(compound_encoder_config)
     model = DownstreamModel_all(model_config, compound_encoder)
     if metric == 'square':
         criterion = nn.MSELoss()
