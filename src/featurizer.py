@@ -72,9 +72,6 @@ class DownstreamCollateFn_all(object):
         self.bond_float_names = bond_float_names
         self.bond_angle_float_names = bond_angle_float_names
         self.face_angle_float_names = ["dihes_angle"]
-        self.bond_total_float_names = ["dis"]
-        self.bond_total_float_names_1 = ["dis-1"]
-        self.bond_total_float_names_2 = ["dis-1", "dis-6", "dis-12"]
         self.task_type = task_type
         self.is_inference = is_inference
 
@@ -133,7 +130,6 @@ class DownstreamCollateFn_all(object):
                 edges=data['BondAngleGraph_edges'],
                 node_feat={},
                 edge_feat={name: data[name].reshape([-1, 1]).astype('float32') for name in self.bond_angle_float_names})
-
             da_g = pgl.Graph(
                 num_nodes=len(data['BondAngleGraph_edges']),
                 edges=data['DihesAngleGraph_edges'],
@@ -145,7 +141,6 @@ class DownstreamCollateFn_all(object):
             dihes_angle_graph_list.append(da_g)
             if not self.is_inference:
                 label_list.append(data['label'])
-
         # TODO: append default mol
         smiles = "CCC(C)C"
         mol_default = Chem.MolFromSmiles(smiles)
@@ -163,7 +158,6 @@ class DownstreamCollateFn_all(object):
             node_feat={},
             edge_feat={name: mol_default_3d[name].reshape([-1, 1]).astype('float32') for name in
                        self.bond_angle_float_names})
-
         da_g_default = pgl.Graph(
             num_nodes=len(mol_default_3d['BondAngleGraph_edges']),
             edges=mol_default_3d['DihesAngleGraph_edges'],
@@ -171,11 +165,9 @@ class DownstreamCollateFn_all(object):
             edge_feat={
                 name: mol_default_3d[name].reshape([-1, 1]).astype(
                     'float32') * np.pi / 180 for name in self.face_angle_float_names})
-
         atom_bond_graph_list.append(ab_g_default)
         bond_angle_graph_list.append(ba_g_default)
         dihes_angle_graph_list.append(da_g_default)
-
         atom_bond_graph = pgl.Graph.batch(atom_bond_graph_list)
         bond_angle_graph = pgl.Graph.batch(bond_angle_graph_list)
         dihes_angle_graph_list = pgl.Graph.batch(dihes_angle_graph_list)
@@ -186,7 +178,6 @@ class DownstreamCollateFn_all(object):
         self._flat_shapes(bond_angle_graph.edge_feat)
         self._flat_shapes(dihes_angle_graph_list.node_feat)
         self._flat_shapes(dihes_angle_graph_list.edge_feat)
-
         if not self.is_inference:
             if self.task_type == 'class':
                 labels = np.array(label_list)
