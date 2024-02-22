@@ -51,11 +51,8 @@ def WeightedNTXentLoss_func(x1, x2, fp_score, temperature=0.1, use_cosine_simila
     mask_samples_from_same_repr = _get_correlated_mask(batch_size)
     negatives = similarity_matrix[mask_samples_from_same_repr].reshape([2 * batch_size, -1])
     negatives *= fp_score
-    if rms is not None:
-        rms = paddle.clip(rms, 0.0, 8.0) / 8
-        rms = paddle.concat([rms, rms], axis=0)
-        rms = 1 - 0.5 * rms
-        positives *= rms
+    rms = paddle.unsqueeze(paddle.concat([rms, rms], axis=0), axis=-1)
+    positives *= rms
     logits = paddle.concat((positives, negatives), axis=1)
     logits /= temperature
     labels = paddle.zeros([2 * batch_size], dtype="int64")
