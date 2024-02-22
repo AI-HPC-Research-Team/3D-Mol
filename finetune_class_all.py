@@ -22,7 +22,7 @@ import numpy as np
 import time
 import paddle
 import paddle.nn as nn
-from model_zoo.gem_model import GeoGNNModel_3_GIN2_all
+from model_zoo.gem_model import GeoGNNModel_all
 from utils.basic_utils import load_json_config
 from datasets.inmemory_dataset import InMemoryDataset
 from src.model import DownstreamModel_all
@@ -141,7 +141,7 @@ def main(args):
         else:
             print('Read preprocessing data...')
             dataset = InMemoryDataset(npz_data_path=args.cached_data_path)
-    compound_encoder = GeoGNNModel_3_GIN2_all(compound_encoder_config)
+    compound_encoder = GeoGNNModel_all(compound_encoder_config)
     model = DownstreamModel_all(model_config, compound_encoder)
     criterion = nn.BCELoss(reduction='none')
     encoder_params = compound_encoder.parameters()
