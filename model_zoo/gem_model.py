@@ -29,7 +29,7 @@ from .weighted_nt_xent import WeightedNTXentLoss_func
 import paddle.nn.functional as F
 
 
-class GeoGNNModel_3_GIN2_all(nn.Layer):
+class GeoGNNModel_all(nn.Layer):
     """
     The GeoGNN Model used in GEM.
 
@@ -38,7 +38,7 @@ class GeoGNNModel_3_GIN2_all(nn.Layer):
     """
 
     def __init__(self, model_config={}):
-        super(GeoGNNModel_3_GIN2_all, self).__init__()
+        super(GeoGNNModel_all, self).__init__()
         print(model_config)
         self.embed_dim = model_config.get('embed_dim', 32)
         self.dropout_rate = model_config.get('dropout_rate', 0.2)
@@ -48,18 +48,13 @@ class GeoGNNModel_3_GIN2_all(nn.Layer):
         self.bond_names = model_config['bond_names']
         self.bond_float_names = model_config['bond_float_names']
         self.bond_angle_float_names = model_config['bond_angle_float_names']
-        self.bond_total_float_names = ["dis"]
-        self.bond_total_float_names_1 = ["dis-1"]
-        self.bond_total_float_names_2 = ["dis-1", "dis-6", "dis-12"]
         self.dihes_bond_float_names = ["dihes_angle"]
+
         self.init_atom_embedding = AtomEmbedding(self.atom_names, self.embed_dim)
         self.init_bond_embedding = BondEmbedding(self.bond_names, self.embed_dim)
         self.init_bond_float_rbf = BondFloatRBF(self.bond_float_names, self.embed_dim)
         self.init_super_edge_embedding = BondAngleFloatRBF(self.bond_angle_float_names, self.embed_dim)
-        self.init_dihes_edge_embedding = BondAngleFloatRBF(self.dihes_bond_float_names, self.embed_dim)
-        self.mlp_cat = MLP(2, hidden_size=self.embed_dim, act="leaky_relu", in_size=self.embed_dim, out_size=self.embed_dim,
-                           dropout_rate=self.dropout_rate)
-        self.atom_embedding_list = nn.LayerList()
+
         self.bond_embedding_list = nn.LayerList()
         self.bond_float_rbf_list = nn.LayerList()
         self.bond_angle_float_rbf_list = nn.LayerList()
@@ -67,8 +62,8 @@ class GeoGNNModel_3_GIN2_all(nn.Layer):
         self.atom_bond_block_list = nn.LayerList()
         self.bond_angle_block_list = nn.LayerList()
         self.dihes_angle_list = nn.LayerList()
+
         for layer_id in range(self.layer_num):
-            self.atom_embedding_list.append(AtomEmbedding(self.atom_names, self.embed_dim))
             self.bond_embedding_list.append(BondEmbedding(self.bond_names, self.embed_dim))
             self.bond_float_rbf_list.append(BondFloatRBF(self.bond_float_names, self.embed_dim))
             self.bond_angle_float_rbf_list.append(BondAngleFloatRBF(self.bond_angle_float_names, self.embed_dim))
@@ -79,6 +74,7 @@ class GeoGNNModel_3_GIN2_all(nn.Layer):
                 GeoGNNBlock_2(self.embed_dim, self.dropout_rate, last_act=(layer_id != self.layer_num - 1)))
             self.dihes_angle_list.append(
                 GeoGNNBlock_2(self.embed_dim, self.dropout_rate, last_act=(layer_id != self.layer_num - 1)))
+
         # TODO: use self-implemented MeanPool due to pgl bug.
         if self.readout == 'mean':
             self.graph_pool = MeanPool()
@@ -103,7 +99,7 @@ class GeoGNNModel_3_GIN2_all(nn.Layer):
         """the out dim of graph_repr"""
         return self.embed_dim
 
-    def forward(self, atom_bond_graph, bond_angle_graph, dihes_angle_graph, total_graph):
+    def forward(self, atom_bond_graph, bond_angle_graph, dihes_angle_graph):
         """
         Build the network.
         """
@@ -115,13 +111,12 @@ class GeoGNNModel_3_GIN2_all(nn.Layer):
         edge_hidden_list = [edge_hidden]
         super_edge_hidden_list = [super_edge_hidden]
         for layer_id in range(self.layer_num):
-            cur_node_hidden = self.atom_embedding_list[layer_id](atom_bond_graph.node_feat)
             cur_edge_hidden = self.bond_embedding_list[layer_id](atom_bond_graph.edge_feat)
             cur_edge_hidden = cur_edge_hidden + self.bond_float_rbf_list[layer_id](atom_bond_graph.edge_feat)
             cur_angle_hidden = self.bond_angle_float_rbf_list[layer_id](bond_angle_graph.edge_feat)
             cur_dihes_angle_hidden = self.dihes_angle_float_rbf_list[layer_id](dihes_angle_graph.edge_feat)
             node_hidden, edge_hidden_1 = self.atom_bond_block_list[layer_id](atom_bond_graph, node_hidden_list[
-                layer_id] + cur_node_hidden, edge_hidden_list[layer_id])
+                layer_id], edge_hidden_list[layer_id])
             edge_hidden, dihes_node_hidden_1 = self.bond_angle_block_list[layer_id](bond_angle_graph,
                                                                                     cur_edge_hidden + edge_hidden_1,
                                                                                     super_edge_hidden_list[layer_id])
