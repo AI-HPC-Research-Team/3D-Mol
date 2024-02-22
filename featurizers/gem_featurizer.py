@@ -536,14 +536,15 @@ class GeoPredTransformFn(object):
         mol = AllChem.MolFromSmiles(smiles)
         if mol is None:
             return None
-        data, data_1, rms = mol_to_geognn_graph_data_MMFF3d_all_cl_conf(mol)
+        data, data_1, rms, fp3D, fp3D_1 = mol_to_geognn_graph_data_MMFF3d_all_cl_conf(mol)
         data = self.prepare_pretrain_task(data)
-        data['smiles'] = smiles
+        data['fp3D'] = fp3D
+        data['fp3D_1'] = fp3D_1
         data['rms'] = np.array([rms])
         d = list(data_1.keys())
         d_copy = copy.deepcopy(d)
         for i in list(d_copy):
-            data_1.update({i + '_conf_cl': data.pop(i)})
+            data.update({i + '_conf_cl_1': data_1.pop(i)})
         data = dict(data, **data_1)
         return data
 
