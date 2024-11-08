@@ -81,10 +81,28 @@ class InMemoryDataset(object):
         if not npz_data_files is None:
             self.data_list = self._load_npz_data_files(npz_data_files)
 
-    def _clean(self):
+        # self.data_list
+
+    def c(self):
         data_list_temp = []
         for d in self.data_list:
             if d is not None:
+                data_list_temp.append(d)
+        self.data_list = data_list_temp
+        return 1
+
+    def _energy_remove(self):
+        data_list_temp = []
+        for d in self.data_list:
+            if d['energy'] != 0:
+                data_list_temp.append(d)
+        self.data_list = data_list_temp
+        return 1
+
+    def _smiles_remove(self):
+        data_list_temp = []
+        for d in self.data_list:
+            if len(d['smiles']) < 400:
                 data_list_temp.append(d)
         self.data_list = data_list_temp
         return 1
@@ -176,98 +194,3 @@ class InMemoryDataset(object):
                 num_workers=num_workers, 
                 shuffle=shuffle,
                 collate_fn=collate_fn)
-
-
-# class InMemoryDataset_low_store(object):
-#     """
-#     Description:
-#         The InMemoryDataset manages ``data_list`` which is a list of `data` and
-#         the `data` is a dict of numpy ndarray. And each dict has the same keys.
-#
-#         It works like a list: you can call `dataset[i] to get the i-th element of
-#         the ``data_list`` and call `len(dataset)` to get the length of ``data_list``.
-#
-#         The ``data_list`` can be cached in npz files by calling `dataset.save_data(data_path)`
-#         and after that, call `InMemoryDataset(data_path)` to reload.
-#
-#     Attributes:
-#         data_list(list): a list of dict of numpy ndarray.
-#
-#     Example:
-#         .. code-block:: python
-#
-#             data_list = [{'a': np.zeros([4, 5])}, {'a': np.zeros([7, 5])}]
-#             dataset = InMemoryDataset(data_list=data_list)
-#             print(len(dataset))
-#             dataset.save_data('./cached_npz')   # save data_list to ./cached_npz
-#
-#             dataset2 = InMemoryDataset(npz_data_path='./cached_npz')    # will load the saved `data_list`
-#             print(len(dataset))
-#     """
-#
-#     def __init__(self, data_lengh):
-#         """
-#         Users can either directly pass the ``data_list`` or pass the `data_path` from
-#         which the cached ``data_list`` will be loaded.
-#
-#         Args:
-#             data_list(list): a list of dict of numpy ndarray.
-#             data_path(str): the path to the cached npz path.
-#         """
-#         super(InMemoryDataset_low_store, self).__init__()
-#         self.data_lengh = data_lengh
-#
-#
-#     def __getitem__(self, key):
-#         if isinstance(key, slice):
-#             start, stop, step = key.indices(len(self))
-#             dataset = InMemoryDataset(
-#                 data_list=[self[i] for i in range(start, stop, step)])
-#             return dataset
-#         elif isinstance(key, int) or \
-#                 isinstance(key, np.int64) or \
-#                 isinstance(key, np.int32):
-#             return self.data_list[key]
-#         elif isinstance(key, list):
-#             dataset = InMemoryDataset(
-#                 data_list=[self[i] for i in key])
-#             return dataset
-#         else:
-#             raise TypeError('Invalid argument type: %s of %s' % (type(key), key))
-#
-#     def __len__(self):
-#         return len(self.data_list)
-#
-#     def transform(self, transform_fn, num_workers=4, drop_none=False):
-#         """
-#         Inplace apply `transform_fn` on the `data_list` with multiprocess.
-#         """
-#         data_list = mp_pool_map(self.data_list, transform_fn, num_workers)
-#         if drop_none:
-#             self.data_list = [data for data in data_list if not data is None]
-#         else:
-#             self.data_list = data_list
-#
-#     def get_data_loader(self, batch_size, num_workers=4, shuffle=False, collate_fn=None):
-#         """
-#         It returns an batch iterator which yields a batch of data. Firstly, a sub-list of
-#         `data` of size ``batch_size`` will be draw from the ``data_list``, then
-#         the function ``collate_fn`` will be applied to the sub-list to create a batch and
-#         yield back. This process is accelerated by multiprocess.
-#
-#         Args:
-#             batch_size(int): the batch_size of the batch data of each yield.
-#             num_workers(int): the number of workers used to generate batch data. Required by
-#                 multiprocess.
-#             shuffle(bool): whether to shuffle the order of the ``data_list``.
-#             collate_fn(function): used to convert the sub-list of ``data_list`` to the
-#                 aggregated batch data.
-#
-#         Yields:
-#             the batch data processed by ``collate_fn``.
-#         """
-#         return Dataloader(self,
-#                           batch_size=batch_size,
-#                           num_workers=num_workers,
-#                           shuffle=shuffle,
-#                           collate_fn=collate_fn)
