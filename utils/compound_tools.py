@@ -16,13 +16,19 @@
 | Tools for compound features.
 | Adapted from https://github.com/snap-stanford/pretrain-gnns/blob/master/chem/loader.py
 """
-import random
+import copy
+import time
+
 from rdkit.Chem import rdchem
 from rdkit.Chem import AllChem
 from rdkit import Chem
 from rdkit.Chem import rdMolTransforms
 import numpy as np
+import random
+import string
+import warnings
 from utils.compound_constants import DAY_LIGHT_FG_SMARTS_LIST
+from copy import deepcopy
 
 def get_gasteiger_partial_charges(mol, n_iter=12):
     """
@@ -390,6 +396,8 @@ class CompoundKit(object):
         return pc
 
 
+from rdkit.Chem.Pharm2D import Gobbi_Pharm2D, Generate
+from rdkit.Chem import rdMolDescriptors
 class Compound3DKit(object):
     """the 3Dkit of Compound"""
 
@@ -417,6 +425,8 @@ class Compound3DKit(object):
             energy = res[index][1]
             conf = new_mol.GetConformer(id=int(index))
         except:
+            # print("error1")
+            # return None
             new_mol = mol
             AllChem.Compute2DCoords(new_mol)
             energy = 0
@@ -443,78 +453,69 @@ class Compound3DKit(object):
             a.append(conf)
         return a
 
-
     @staticmethod
     def get_MMFF_atom_poses_cl(mol, numConfs=None, return_energy=False, return_conf=False):
         """the atoms of mol will be changed in some cases."""
         try:
             new_mol = Chem.AddHs(mol)
-            res = AllChem.EmbedMultipleConfs(new_mol, numConfs=numConfs)
-            ### MMFF generates multiple conformations
+            res = AllChem.EmbedMultipleConfs(new_mol, numConfs=10)
             res = AllChem.MMFFOptimizeMoleculeConfs(new_mol)
             index = np.argmin([x[1] for x in res])
-            index_1 = -1
-            cnt = 0
-            while index_1 == -1:
-                index_tmp = random.randint(0, 9)
-                if index_tmp != index:
-                    index_1 = index_tmp
-                if cnt > 10:
-                    index_1 = 2
-                cnt += 1
+            valid_confs_0 = [i for i, (status, energy) in enumerate(res) if status == 0 and i != index]
+            index_1 = random.sample([i for i, (status, energy) in enumerate(res) if i != index], 1)
             rms = AllChem.GetConformerRMS(new_mol, int(index), int(index_1))
+
+            rdf_fp_0 = np.array(rdMolDescriptors.CalcRDF(new_mol, confId=int(index)), "float32")
+            rdf_fp_1 = np.array(rdMolDescriptors.CalcRDF(new_mol, confId=int(index_1)), "float32")
+
+            autocorr3d_fp_0 = np.array(rdMolDescriptors.CalcAUTOCORR3D(new_mol, confId=int(index)), "float32")
+            autocorr3d_fp_1 = np.array(rdMolDescriptors.CalcAUTOCORR3D(new_mol, confId=int(index_1)), "float32")
+
+            morse_fp_0 = np.array(rdMolDescriptors.CalcMORSE(new_mol, confId=int(index)), "float32")
+            morse_fp_1 = np.array(rdMolDescriptors.CalcMORSE(new_mol, confId=int(index_1)), "float32")
+
             whim_fp_0 = np.array(rdMolDescriptors.CalcWHIM(new_mol, confId=int(index)), "float32")
             whim_fp_1 = np.array(rdMolDescriptors.CalcWHIM(new_mol, confId=int(index_1)), "float32")
+
+            getaway_fp_0 = np.array(rdMolDescriptors.CalcGETAWAY(new_mol, confId=int(index)), "float32")
+            getaway_fp_1 = np.array(rdMolDescriptors.CalcGETAWAY(new_mol, confId=int(index_1)), "float32")
+
             new_mol = Chem.RemoveHs(new_mol)
-            energy = res[index][1]
-            energy_1 = res[index_1][1]
-            conf = new_mol.GetConformer(id=int(index))
-            conf_1 = new_mol.GetConformer(id=int(index_1))
+            energy, energy_1 = res[index][1], res[index_1][1]
+            conf, conf_1 = new_mol.GetConformer(id=int(index)), new_mol.GetConformer(id=int(index_1))
+
         except:
-            print("error1")
             new_mol = mol
             AllChem.Compute2DCoords(new_mol)
-            energy = 0
-            energy_1 = 0
+            energy, energy_1 = 0, 0
             conf = new_mol.GetConformer()
             conf_1 = conf
             rms = 0
+            rdf_fp_0 = np.array(rdMolDescriptors.CalcRDF(new_mol), "float32")
+            rdf_fp_1 = rdf_fp_0
+            autocorr3d_fp_0 = np.array(rdMolDescriptors.CalcAUTOCORR3D(new_mol), "float32")
+            autocorr3d_fp_1 = autocorr3d_fp_0
+            morse_fp_0 = np.array(rdMolDescriptors.CalcMORSE(new_mol), "float32")
+            morse_fp_1 = morse_fp_0
+            whim_fp_0 = np.array(rdMolDescriptors.CalcWHIM(new_mol), "float32")
+            whim_fp_1 = whim_fp_0
+            getaway_fp_0 = np.array(rdMolDescriptors.CalcGETAWAY(new_mol), "float32")
+            getaway_fp_1 = getaway_fp_0
+
+        fp3D = {
+            "rdf": [rdf_fp_0, rdf_fp_1],
+            "autocorr3d": [autocorr3d_fp_0, autocorr3d_fp_1],
+            "morse": [morse_fp_0, morse_fp_1],
+            "whim": [whim_fp_0, whim_fp_1],
+            "getaway": [getaway_fp_0, getaway_fp_1]
+        }
+
 
         atom_poses = Compound3DKit.get_atom_poses(new_mol, conf)
         atom_poses_1 = Compound3DKit.get_atom_poses(new_mol, conf_1)
-        a = [new_mol, rms, atom_poses, atom_poses_1]
-        if return_energy:
-            a.append(energy)
-            a.append(energy_1)
-        if return_conf:
-            a.append(conf)
-            a.append(conf_1)
-        return a, whim_fp_0, whim_fp_1
+        a = [new_mol, conf, conf_1, rms, atom_poses, atom_poses_1, energy, energy_1, fp3D]
+        return a
 
-
-    @staticmethod
-    def get_2d_atom_poses_cl(mol, numConfs=None, return_energy=False, return_conf=False):
-        """get 2d atom poses"""
-        AllChem.Compute2DCoords(mol)
-        conf = mol.GetConformer()
-        atom_poses = Compound3DKit.get_atom_poses(mol, conf)
-        a = [mol, atom_poses, atom_poses]
-        if return_energy:
-            a.append(0)
-            a.append(0)
-        if return_conf:
-            a.append(conf)
-            a.append(conf)
-        return a, whim_fp_0, whim_fp_1
-
-    @staticmethod
-    def get_bond_lengths(edges, atom_poses):
-        """get bond lengths"""
-        bond_lengths = []
-        for src_node_i, tar_node_j in edges:
-            bond_lengths.append(np.linalg.norm(atom_poses[tar_node_j] - atom_poses[src_node_i]))
-        bond_lengths = np.array(bond_lengths, 'float32')
-        return bond_lengths
 
     @staticmethod
     def get_superedge_angles(edges, atom_poses, dir_type='HT'):
@@ -587,7 +588,7 @@ class Compound3DKit(object):
 
 
 import warnings
-def getdihes_angle_1(data, conf, atom_id_set):
+def getdihes_angle(data, conf, atom_id_set):
 
     SE = len(atom_id_set)
     super_edge_indices= np.arange(SE)
@@ -625,7 +626,10 @@ def getdihes_angle_1(data, conf, atom_id_set):
             elif src_edge_atom_pose[1] == tar_edge_atom_pose[0] and src_edge_atom_pose[2] == tar_edge_atom_pose[1] and src_edge_atom_pose[0] != tar_edge_atom_pose[2]:
                 dihes_edges.append([src_edge_i, tar_edge_i])
                 angle = rdMolTransforms.GetDihedralDeg(conf, int(src_edge_atom_pose[0]), int(src_edge_atom_pose[1]), int(src_edge_atom_pose[2]), int(tar_edge_atom_pose[2]))
+
                 dihes_angles.append(angle)
+
+
                 dihes_angle_node_i.append(src_edge_atom_pose[0])
                 dihes_angle_node_j.append(src_edge_atom_pose[1])
                 dihes_angle_node_k.append(src_edge_atom_pose[2])
@@ -714,9 +718,13 @@ def mol_to_graph_data(mol, total=False, dihes=False, cl=False):
         data[name] = []
     data['edges'] = []
 
+    data['atom_num'] = len(mol.GetAtoms())
+    data['edge_num'] = len(mol.GetBonds())
+
     ### atom features
     for i, atom in enumerate(mol.GetAtoms()):
         if atom.GetAtomicNum() == 0:
+            # print("yes")
             return None
         for name in atom_id_names:
             data[name].append(CompoundKit.get_atom_feature_id(atom, name) + 1)  # 0: OOV
@@ -764,7 +772,7 @@ def mol_to_graph_data(mol, total=False, dihes=False, cl=False):
     return data
 
 
-def mol_to_geognn_graph_data_all(mol, atom_poses, conf, dir_type, total=False, cl=False, type=''):
+def mol_to_geognn_graph_data(mol, atom_poses, conf, dir_type, total=False, cl=False, type=''):
     """
     mol: rdkit molecule
     dir_type: direction type for bond_angle grpah
@@ -777,37 +785,16 @@ def mol_to_geognn_graph_data_all(mol, atom_poses, conf, dir_type, total=False, c
     data['BondAngleGraph_edges'] = BondAngleGraph_edges
     data['bond_angle'] = np.array(bond_angles, 'float32')
 
-    data = getdihes_angle_1(data, conf, atom_id_set)
+    data = getdihes_angle(data, conf, atom_id_set)
     return data
 
 
-def mol_to_geognn_graph_data_MMFF3d_all(mol, total=False, dihes=True):
+def mol_to_geognn_graph_data_MMFF3d(mol, total=False, dihes=True):
     """tbd"""
-    if len(mol.GetAtoms()) <= 400:
-        b = Compound3DKit.get_MMFF_atom_poses(mol, numConfs=10, return_conf=dihes)
-        if b is None:
-            return None
-        mol, atom_poses, conf = b
-    else:
-        mol, atom_poses, conf = Compound3DKit.get_2d_atom_poses(mol, numConfs=10, return_conf=dihes)
-    return mol_to_geognn_graph_data_all(mol, atom_poses, conf, dir_type='HT', total=total)
-
-
-def mol_to_geognn_graph_data_cl(mol, atom_poses, atom_poses_1, conf, conf_1, dir_type, total=False):
-    """
-    mol: rdkit molecule
-    dir_type: direction type for bond_angle grpah
-    """
-    data = mol_to_geognn_graph_data_all(mol, atom_poses, conf, dir_type, total=False)
-    data_1 = mol_to_geognn_graph_data_all(mol, atom_poses_1, conf_1, dir_type, total=False)
-    return data, data_1
-
-
-def mol_to_geognn_graph_data_MMFF3d_all_cl_conf(mol, total=False, dihes=True):
-    """tbd"""
-    b, fp3D, fp3D_1 = Compound3DKit.get_MMFF_atom_poses_cl(mol, numConfs=10, return_conf=dihes)
+    b, fp3D = Compound3DKit.get_MMFF_atom_poses_cl(mol, numConfs=10, return_conf=dihes)
     if b is None:
         return None
-    mol, rms, atom_poses, atom_poses_1, conf, conf_1 = b
-    data, data_1 = mol_to_geognn_graph_data_cl(mol, atom_poses, atom_poses_1, conf, conf_1, dir_type='HT', total=total)
-    return data, data_1, rms, fp3D, fp3D_1
+    mol, conf, conf_1, rms, atom_poses, atom_poses_1, energy, energy_1 = b
+    data = mol_to_geognn_graph_data_all(mol, atom_poses, conf, dir_type='HT', total=False)
+    data_1 = mol_to_geognn_graph_data_all(mol, atom_poses_1, conf_1, dir_type='HT', total=False)
+    return data, data_1, rms, energy, energy_1, fp3D
