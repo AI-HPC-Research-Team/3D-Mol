@@ -8,7 +8,7 @@
 
     "embed_dim": 128,
     "dropout_rate": 0.5,
-    "layer_num": 10,
+    "layer_num": 8,
     "act": "leaky_relu",
     "readout": "mean",
     "type": "attn"
