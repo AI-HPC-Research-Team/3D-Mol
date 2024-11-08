@@ -18,11 +18,21 @@ downstream featurizer
 """
 
 import numpy as np
+import networkx as nx
+from copy import deepcopy
 import pgl
-from utils.compound_tools import mol_to_geognn_graph_data_MMFF3d_all
-from rdkit import Chem
 from rdkit.Chem import AllChem
+from rdkit.Chem import rdDistGeom as molDG
+from sklearn.metrics import pairwise_distances
+import hashlib
+from utils.compound_tools import mol_to_geognn_graph_data_MMFF3d
+
+from utils.compound_constants import DAY_LIGHT_FG_SMARTS_LIST, DAY_LIGHT_FG_SMARTS_LIST_1, DAY_LIGHT_FG_SMARTS_LIST_1_1
+from rdkit import Chem, DataStructs
+from rdkit.Chem import AllChem
+import random
 import warnings
+import copy
 warnings.filterwarnings("ignore", message='not removing hydrogen atom with dummy atom neighbors')
 warnings.filterwarnings("ignore", message='non-ring atom 0 marked aromatic')
 warnings.filterwarnings("ignore", message="Can't kekulize mol.  Unkekulized atoms: 0 3 4")
@@ -30,7 +40,7 @@ warnings.filterwarnings("ignore", message="Can't kekulize mol.  Unkekulized atom
 day_light_fg_smarts_list_fg = []
 
 
-class DownstreamTransformFn_all(object):
+class DownstreamTransformFn(object):
     """Gen features for downstream model"""
 
     def __init__(self, is_inference=False):
@@ -50,14 +60,16 @@ class DownstreamTransformFn_all(object):
         mol = AllChem.MolFromSmiles(smiles)
         if mol is None:
             return None
-        data = mol_to_geognn_graph_data_MMFF3d_all(mol)
+        data = mol_to_geognn_graph_data_MMFF3d(mol)
+        if data is None:
+            return None
         if not self.is_inference:
             data['label'] = raw_data['label'].reshape([-1])
         data['smiles'] = smiles
         return data
 
 
-class DownstreamCollateFn_all(object):
+class DownstreamCollateFn(object):
     """CollateFn for downstream model"""
 
     def __init__(self,
@@ -99,10 +111,12 @@ class DownstreamCollateFn_all(object):
         for data in data_list:
             data['dihes_angle'] = np.nan_to_num(data['dihes_angle'])
             data['dihes_angle_extra'] = np.nan_to_num(data['dihes_angle_extra'])
+            
             data['DihesAngleGraph_edges'] = np.concatenate(
                 [data['DihesAngleGraph_edges_extra'], data['DihesAngleGraph_edges']],
                 axis=0)
             data['dihes_angle'] = np.concatenate([data['dihes_angle_extra'], data['dihes_angle']], axis=0)
+
             len1 = len(data['BondAngleGraph_edges'])
             a = np.arange(len1)
             a = np.broadcast_to(a, (2, len1))
@@ -110,6 +124,7 @@ class DownstreamCollateFn_all(object):
             b = np.zeros([len1]).astype('float32')
             data['DihesAngleGraph_edges'] = np.concatenate([data['DihesAngleGraph_edges'], a], axis=0)
             data['dihes_angle'] = np.concatenate([data['dihes_angle'], b], axis=0)
+
             len1 = len(data['edges'])
             a = np.arange(len1)
             a = np.broadcast_to(a, (2, len1))
@@ -117,7 +132,9 @@ class DownstreamCollateFn_all(object):
             b = np.zeros([len1]).astype('float32')
             data['BondAngleGraph_edges'] = np.concatenate([data['BondAngleGraph_edges'], a], axis=0)
             data['bond_angle'] = np.concatenate([data['bond_angle'], b], axis=0)
+
             data['dihes_angle'] = np.abs(data['dihes_angle'])
+
             ab_g = pgl.Graph(
                 num_nodes=len(data[self.atom_names[0]]),
                 edges=data['edges'],
@@ -130,21 +147,25 @@ class DownstreamCollateFn_all(object):
                 edges=data['BondAngleGraph_edges'],
                 node_feat={},
                 edge_feat={name: data[name].reshape([-1, 1]).astype('float32') for name in self.bond_angle_float_names})
+
             da_g = pgl.Graph(
                 num_nodes=len(data['BondAngleGraph_edges']),
                 edges=data['DihesAngleGraph_edges'],
                 node_feat={},
                 edge_feat={name: data[name].reshape([-1, 1]).astype('float32') *
                                  np.pi / 180 for name in self.face_angle_float_names})
+
             atom_bond_graph_list.append(ab_g)
             bond_angle_graph_list.append(ba_g)
             dihes_angle_graph_list.append(da_g)
             if not self.is_inference:
                 label_list.append(data['label'])
+
         # TODO: append default mol
         smiles = "CCC(C)C"
         mol_default = Chem.MolFromSmiles(smiles)
         mol_default_3d = mol_to_geognn_graph_data_MMFF3d_all(mol_default)
+        
         ab_g_default = pgl.Graph(
             num_nodes=len(mol_default_3d[self.atom_names[0]]),
             edges=mol_default_3d['edges'],
@@ -158,6 +179,7 @@ class DownstreamCollateFn_all(object):
             node_feat={},
             edge_feat={name: mol_default_3d[name].reshape([-1, 1]).astype('float32') for name in
                        self.bond_angle_float_names})
+
         da_g_default = pgl.Graph(
             num_nodes=len(mol_default_3d['BondAngleGraph_edges']),
             edges=mol_default_3d['DihesAngleGraph_edges'],
@@ -165,9 +187,11 @@ class DownstreamCollateFn_all(object):
             edge_feat={
                 name: mol_default_3d[name].reshape([-1, 1]).astype(
                     'float32') * np.pi / 180 for name in self.face_angle_float_names})
+
         atom_bond_graph_list.append(ab_g_default)
         bond_angle_graph_list.append(ba_g_default)
         dihes_angle_graph_list.append(da_g_default)
+
         atom_bond_graph = pgl.Graph.batch(atom_bond_graph_list)
         bond_angle_graph = pgl.Graph.batch(bond_angle_graph_list)
         dihes_angle_graph_list = pgl.Graph.batch(dihes_angle_graph_list)
@@ -178,6 +202,7 @@ class DownstreamCollateFn_all(object):
         self._flat_shapes(bond_angle_graph.edge_feat)
         self._flat_shapes(dihes_angle_graph_list.node_feat)
         self._flat_shapes(dihes_angle_graph_list.edge_feat)
+
         if not self.is_inference:
             if self.task_type == 'class':
                 labels = np.array(label_list)
@@ -190,3 +215,4 @@ class DownstreamCollateFn_all(object):
                 return atom_bond_graph, bond_angle_graph, dihes_angle_graph_list, labels
         else:
             return atom_bond_graph, bond_angle_graph, dihes_angle_graph_list
+
