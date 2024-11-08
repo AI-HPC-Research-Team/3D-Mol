@@ -83,7 +83,7 @@ class InMemoryDataset(object):
 
         # self.data_list
 
-    def c(self):
+    def _none_remove(self):
         data_list_temp = []
         for d in self.data_list:
             if d is not None:
