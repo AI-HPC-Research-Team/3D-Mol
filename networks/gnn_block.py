@@ -72,13 +72,13 @@ class MeanPool(nn.Layer):
         return pooled
 
 
-class GIN_2(nn.Layer):
+class GIN(nn.Layer):
     """
     Implementation of Graph Isomorphism Network (GIN) layer with edge features
     """
 
     def __init__(self, hidden_size):
-        super(GIN_2, self).__init__()
+        super(GIN, self).__init__()
         self.norm = nn.LayerNorm(hidden_size)
         self.mlp_node = nn.Sequential(
             nn.Linear(hidden_size, hidden_size * 2),
@@ -113,3 +113,4 @@ class GIN_2(nn.Layer):
         node_feat = self.mlp_node(node_feat)
         edge_feat = edge_feat + self.mlp_edge(msg['h'])
         return node_feat, edge_feat
+        
