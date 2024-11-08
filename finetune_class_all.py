@@ -16,17 +16,20 @@
 """
 Finetune:to do some downstream task
 """
+
+import os
 from os.path import join, exists, basename
 import argparse
 import numpy as np
 import time
 import paddle
 import paddle.nn as nn
-from model_zoo.gem_model import GeoGNNModel_all
+import pgl
+from model_zoo.gem_model import GeoGNNModel
 from utils.basic_utils import load_json_config
 from datasets.inmemory_dataset import InMemoryDataset
-from src.model import DownstreamModel_all
-from src.featurizer import DownstreamTransformFn_all, DownstreamCollateFn_all
+from src.model import DownstreamModel
+from src.featurizer import DownstreamTransformFn, DownstreamCollateFn
 from src.utils import get_dataset, create_splitter, get_downstream_task_names, calc_rocauc_score, exempt_parameters
 
 
@@ -54,7 +57,7 @@ def train(args, model, train_dataset, collate_fn, criterion, encoder_opt=None, h
         dihes_angle_graphs = dihes_angle_graphs.tensor()
         labels = paddle.to_tensor(labels, 'float32')
         valids = paddle.to_tensor(valids, 'float32')
-        preds = model(atom_bond_graphs, bond_angle_graphs, dihes_angle_graphs, 1)
+        preds = model(atom_bond_graphs, bond_angle_graphs, dihes_angle_graphs)
         loss = criterion(preds, labels)
         loss = paddle.sum(loss * valids) / paddle.sum(valids)
         loss.backward()
@@ -91,7 +94,7 @@ def evaluate(args, model, test_dataset, collate_fn):
         dihes_angle_graphs = dihes_angle_graphs.tensor()
         labels = paddle.to_tensor(labels, 'float32')
         valids = paddle.to_tensor(valids, 'float32')
-        preds = model(atom_bond_graphs, bond_angle_graphs, dihes_angle_graphs, 1)
+        preds = model(atom_bond_graphs, bond_angle_graphs, dihes_angle_graphs)
         total_pred.append(preds.numpy())
         total_valid.append(valids.numpy())
         total_label.append(labels.numpy())
@@ -125,28 +128,42 @@ def main(args):
     task_names = get_downstream_task_names(args.dataset_name, args.data_path)
     model_config['task_type'] = 'class'
     model_config['num_tasks'] = len(task_names)
-    print('model_config:')
-    print(model_config)
+    ### load data
+    # featurizer:
+    #     Gen features according to the raw data and return the graph data.
+    #     Collate features about the graph data and return the feed dictionary.
+    # splitter:
+    #     split type of the dataset:random,scaffold,random with scaffold. Here is randomsplit.
+    #     `ScaffoldSplitter` will firstly order the compounds according to Bemis-Murcko scaffold,
+    #     then take the first `frac_train` proportion as the train set, the next `frac_valid` proportion as the valid set
+    #     and the rest as the test set. `ScaffoldSplitter` can better evaluate the generalization ability of the model on
+    #     out-of-distribution samples. Note that other splitters like `RandomSplitter`, `RandomScaffoldSplitter`
+    #     and `IndexSplitter` is also available."
+    pt_model_config = load_json_config("model_configs/pretrain_gem.json")
     if args.task == 'data':
         print('Preprocessing data...')
         dataset = get_dataset(args.dataset_name, args.data_path, task_names)
-        dataset.transform(DownstreamTransformFn_all(), num_workers=args.num_workers)
+        dataset.transform(DownstreamTransformFn(pt_model_config['pretrain_tasks'], pt_model_config['mask_ratio']), num_workers=args.num_workers)
+        a_temp = dataset._none_remove()
         dataset.save_data(args.cached_data_path)
         return
     else:
         if args.cached_data_path is None or args.cached_data_path == "":
             print('Processing data...')
             dataset = get_dataset(args.dataset_name, args.data_path, task_names)
-            dataset.transform(DownstreamTransformFn_all(), num_workers=args.num_workers)
+            dataset.transform(DownstreamTransformFn(model_config['pretrain_tasks'], model_config['mask_ratio']), num_workers=args.num_workers)
         else:
             print('Read preprocessing data...')
             dataset = InMemoryDataset(npz_data_path=args.cached_data_path)
-    compound_encoder = GeoGNNModel_all(compound_encoder_config)
-    model = DownstreamModel_all(model_config, compound_encoder)
+    ### build model
+    compound_encoder = GeoGNNModel(compound_encoder_config)
+    model = DownstreamModel(model_config, compound_encoder)
+
     criterion = nn.BCELoss(reduction='none')
     encoder_params = compound_encoder.parameters()
     head_params = exempt_parameters(model.parameters(), encoder_params)
     encoder_opt = paddle.optimizer.Adam(args.encoder_lr, parameters=encoder_params)
+    # encoder_opt = None
     head_opt = paddle.optimizer.Adam(args.head_lr, parameters=head_params)
     print('Total param num: %s' % (len(model.parameters())))
     if encoder_opt is not None:
@@ -168,9 +185,15 @@ def main(args):
     print('Valid pos/neg ratio %s/%s' % get_pos_neg_ratio(valid_dataset))
     print('Test pos/neg ratio %s/%s' % get_pos_neg_ratio(test_dataset))
 
+    ### start train
+    # Load the train function and calculate the train loss in each epoch.
+    # Here we set the epoch is in range of max epoch,you can change it if you want. 
+
+    # Then we will calculate the train loss ,valid auc,test auc and print them.
+    # Finally we save it to the model according to the dataset.
     list_val_auc, list_test_auc = [], []
     list_train_loss = []
-    collate_fn = DownstreamCollateFn_all(
+    collate_fn = DownstreamCollateFn(
         atom_names=compound_encoder_config['atom_names'],
         bond_names=compound_encoder_config['bond_names'],
         bond_float_names=compound_encoder_config['bond_float_names'],
@@ -190,16 +213,7 @@ def main(args):
         print("epoch:%s val/auc:%s" % (epoch_id, val_auc))
         print("epoch:%s test/auc:%s" % (epoch_id, test_auc))
         print("epoch:%s test/auc_by_eval:%s" % (epoch_id, test_auc_by_eval))
-        paddle.save(compound_encoder.state_dict(), '%s/epoch%d/compound_encoder.pdparams' % (args.model_dir, epoch_id))
-        paddle.save(model.state_dict(), '%s/epoch%d/model.pdparams' % (args.model_dir, epoch_id))
         print("Time used:%ss" % (time.time() - s))
-
-    print("list_train_loss")
-    print(list_train_loss)
-    print("list_val_auc")
-    print(list_val_auc)
-    print("list_test_auc")
-    print(list_test_auc)
 
     outs = {
         'model_config': basename(args.model_config).replace('.json', ''),
@@ -224,6 +238,8 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    gen = paddle.seed(4321)
+    np.random.seed(4321)
     parser.add_argument("--task", choices=['train', 'data'], default='train')
     parser.add_argument("--DEBUG", action='store_true', default=False)
     parser.add_argument("--batch_size", type=int, default=32)
@@ -238,7 +254,7 @@ if __name__ == '__main__':
 
     parser.add_argument("--compound_encoder_config", type=str)
     parser.add_argument("--model_config", type=str)
-    parser.add_argument("--init_model", type=str)
+    parser.add_argument("--init_model", type=str, default=None)
     parser.add_argument("--model_dir", type=str)
     parser.add_argument("--encoder_lr", type=float, default=0.001)
     parser.add_argument("--head_lr", type=float, default=0.001)
