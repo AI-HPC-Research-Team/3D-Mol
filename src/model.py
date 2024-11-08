@@ -23,16 +23,17 @@ import paddle.nn as nn
 import pgl
 import numpy as np
 from networks.basic_block import MLP
+# from model_zoo.gem_model import GeoGNNModel
 import math
 
 
-class DownstreamModel_all(nn.Layer):
+class DownstreamModel(nn.Layer):
     """
     Docstring for DownstreamModel,it is an supervised
     GNN model which predicts the tasks shown in num_tasks and so on.
     """
     def __init__(self, model_config, compound_encoder):
-        super(DownstreamModel_all, self).__init__()
+        super(DownstreamModel, self).__init__()
         self.task_type = model_config['task_type']
         self.num_tasks = model_config['num_tasks']
 
@@ -48,7 +49,7 @@ class DownstreamModel_all(nn.Layer):
         if self.task_type == 'class':
             self.out_act = nn.Sigmoid()
 
-    def forward(self, atom_bond_graphs, bond_angle_graphs, dihes_angle_graphs, total_angle_graphs):
+    def forward(self, atom_bond_graphs, bond_angle_graphs, dihes_angle_graphs):
         """
         Define the forward function,set the parameter layer options.compound_encoder
         creates a graph data holders that attributes and features in the graph.
@@ -56,7 +57,7 @@ class DownstreamModel_all(nn.Layer):
             pred: the model prediction.
         """
         node_repr, edge_repr, graph_repr = self.compound_encoder(atom_bond_graphs, bond_angle_graphs,
-                                                                 dihes_angle_graphs, total_angle_graphs)
+                                                                 dihes_angle_graphs)
         graph_repr = graph_repr[:-1]
         # self.compound_encoder
         graph_repr = self.norm(graph_repr)
@@ -65,28 +66,3 @@ class DownstreamModel_all(nn.Layer):
             pred = self.out_act(pred)
         return pred
 
-
-class DownstreamModel_vis(nn.Layer):
-    """
-    Docstring for DownstreamModel,it is an supervised
-    GNN model which predicts the tasks shown in num_tasks and so on.
-    """
-    def __init__(self, model_config, compound_encoder):
-        super(DownstreamModel_vis, self).__init__()
-        self.compound_encoder = compound_encoder
-        self.norm = nn.LayerNorm(compound_encoder.graph_dim)
-
-
-    def forward(self, atom_bond_graphs, bond_angle_graphs, dihes_angle_graphs, total_angle_graphs):
-        """
-        Define the forward function,set the parameter layer options.compound_encoder
-        creates a graph data holders that attributes and features in the graph.
-        Returns:
-            pred: the model prediction.
-        """
-        node_repr, edge_repr, graph_repr = self.compound_encoder(atom_bond_graphs, bond_angle_graphs,
-                                                                 dihes_angle_graphs, total_angle_graphs)
-        graph_repr = graph_repr[:-1]
-        graph_repr = self.norm(graph_repr)
-
-        return graph_repr
