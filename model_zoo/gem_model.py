@@ -19,17 +19,22 @@ import numpy as np
 import paddle
 import paddle.nn as nn
 import pgl
+# from pgl.nn import GraphPool
 
-from networks.gnn_block import GIN_2
+from networks.gnn_block import GIN
 from networks.compound_encoder import AtomEmbedding, BondEmbedding, BondFloatRBF, BondAngleFloatRBF
+from utils.compound_tools import CompoundKit
 from networks.gnn_block import MeanPool, GraphNorm
 from networks.basic_block import MLP
 from .weighted_nt_xent import WeightedNTXentLoss_func
+from rdkit import DataStructs, Chem
+# import paddle.nn.functional as F
+from rdkit.Chem import AllChem
 
 import paddle.nn.functional as F
+import math
 
-
-class GeoGNNModel_all(nn.Layer):
+class GeoGNNModel(nn.Layer):
     """
     The GeoGNN Model used in GEM.
 
@@ -38,7 +43,7 @@ class GeoGNNModel_all(nn.Layer):
     """
 
     def __init__(self, model_config={}):
-        super(GeoGNNModel_all, self).__init__()
+        super(GeoGNNModel, self).__init__()
         print(model_config)
         self.embed_dim = model_config.get('embed_dim', 32)
         self.dropout_rate = model_config.get('dropout_rate', 0.2)
@@ -69,11 +74,11 @@ class GeoGNNModel_all(nn.Layer):
             self.bond_angle_float_rbf_list.append(BondAngleFloatRBF(self.bond_angle_float_names, self.embed_dim))
             self.dihes_angle_float_rbf_list.append(BondAngleFloatRBF(self.dihes_bond_float_names, self.embed_dim))
             self.atom_bond_block_list.append(
-                GeoGNNBlock_2(self.embed_dim, self.dropout_rate, last_act=(layer_id != self.layer_num - 1)))
+                GeoGNNBlock(self.embed_dim, self.dropout_rate, last_act=(layer_id != self.layer_num - 1)))
             self.bond_angle_block_list.append(
-                GeoGNNBlock_2(self.embed_dim, self.dropout_rate, last_act=(layer_id != self.layer_num - 1)))
+                GeoGNNBlock(self.embed_dim, self.dropout_rate, last_act=(layer_id != self.layer_num - 1)))
             self.dihes_angle_list.append(
-                GeoGNNBlock_2(self.embed_dim, self.dropout_rate, last_act=(layer_id != self.layer_num - 1)))
+                GeoGNNBlock(self.embed_dim, self.dropout_rate, last_act=(layer_id != self.layer_num - 1)))
 
         # TODO: use self-implemented MeanPool due to pgl bug.
         if self.readout == 'mean':
@@ -132,18 +137,18 @@ class GeoGNNModel_all(nn.Layer):
         return node_repr, edge_repr, graph_repr
 
 
-class GeoGNNBlock_2(nn.Layer):
+class GeoGNNBlock(nn.Layer):
     """
     GeoGNN Block
     """
 
     def __init__(self, embed_dim, dropout_rate, last_act):
-        super(GeoGNNBlock_2, self).__init__()
+        super(GeoGNNBlock, self).__init__()
 
         self.embed_dim = embed_dim
         self.last_act = last_act
 
-        self.gnn = GIN_2(embed_dim)
+        self.gnn = GIN(embed_dim)
         self.norm = nn.LayerNorm(embed_dim)
         self.graph_norm = GraphNorm()
         if last_act:
@@ -167,17 +172,18 @@ class GeoGNNBlock_2(nn.Layer):
         return node_out, edge_out
 
 
-class GeoPredModel_all(nn.Layer):
+class GeoPredModel(nn.Layer):
     """tbd"""
 
     def __init__(self, model_config, compound_encoder):
-        super(GeoPredModel_all, self).__init__()
+        super(GeoPredModel, self).__init__()
         self.compound_encoder = compound_encoder
+
         self.hidden_size = model_config['hidden_size']
         self.dropout_rate = model_config['dropout_rate']
         self.act = model_config['act']
         self.pretrain_tasks = model_config['pretrain_tasks']
-        x = paddle.zeros(shape=[7], dtype='float32')
+        x = paddle.zeros(shape=[8], dtype='float32')
         self.coefs = paddle.create_parameter(
             shape=x.shape,
             dtype=str(x.numpy().dtype),
@@ -185,15 +191,12 @@ class GeoPredModel_all(nn.Layer):
                 initializer=paddle.nn.initializer.Assign(x),
                 regularizer=None
             ))
+
         if 'Cm' in self.pretrain_tasks:
             self.Cm_vocab = model_config['Cm_vocab']
             self.Cm_linear = MLP(2, hidden_size=self.hidden_size, act=self.act, in_size=compound_encoder.embed_dim,
-                                    out_size=self.Cm_vocab + 2, dropout_rate=self.dropout_rate)
+                                 out_size=self.Cm_vocab + 2, dropout_rate=self.dropout_rate)
             self.Cm_loss = nn.CrossEntropyLoss()
-        if 'En' in self.pretrain_tasks:
-            self.En_linear = MLP(2, hidden_size=self.hidden_size, act=self.act, in_size=compound_encoder.embed_dim,
-                                    out_size=1, dropout_rate=self.dropout_rate)
-            self.En_loss = nn.SmoothL1Loss()
         self.Fg_linear = MLP(2, hidden_size=self.hidden_size, act=self.act, in_size=compound_encoder.embed_dim,
                              out_size=model_config['Fg_size'], dropout_rate=self.dropout_rate)
         self.Fg_loss = nn.BCEWithLogitsLoss()
@@ -230,15 +233,10 @@ class GeoPredModel_all(nn.Layer):
 
         print('[GeoPredModel] pretrain_tasks:%s' % str(self.pretrain_tasks))
 
-    def _get_Cm_loss(self, feed_dict, node_repr):
-        masked_node_repr = paddle.gather(node_repr, feed_dict['Cm_node_i'])
+    def _get_Cm_loss(self, Cm_node_i, Cm_context_id, node_repr):
+        masked_node_repr = paddle.gather(node_repr, Cm_node_i)
         logits = self.Cm_linear(masked_node_repr)
-        loss = self.Cm_loss(logits, feed_dict['Cm_context_id'])
-        return loss
-
-    def _get_En_loss(self, feed_dict, graph_repr):
-        logits = self.En_linear(graph_repr)
-        loss = self.En_loss(logits, feed_dict['eng'])
+        loss = self.Cm_loss(logits, Cm_context_id)
         return loss
 
     def _get_Fg_loss(self, feed_dict, graph_repr):
@@ -247,61 +245,67 @@ class GeoPredModel_all(nn.Layer):
         loss = self.Fg_loss(logits, fg_label)
         return loss
 
-    def _get_Bar_loss(self, feed_dict, node_repr):
-        node_i_repr = paddle.gather(node_repr, feed_dict['Ba_node_i'])
-        node_j_repr = paddle.gather(node_repr, feed_dict['Ba_node_j'])
-        node_k_repr = paddle.gather(node_repr, feed_dict['Ba_node_k'])
+    def _get_Bar_loss(self, Ba_node_i, Ba_node_j, Ba_node_k, Ba_bond_angle, node_repr):
+
+        node_i_repr = paddle.gather(node_repr, Ba_node_i)
+        node_j_repr = paddle.gather(node_repr, Ba_node_j)
+        node_k_repr = paddle.gather(node_repr, Ba_node_k)
         node_ij_repr = paddle.concat([node_i_repr, node_j_repr], 1)
         node_ij_repr = self.Bar_mlp_1(node_ij_repr)
         node_jk_repr = paddle.concat([node_j_repr, node_k_repr], 1)
         node_jk_repr = self.Bar_mlp_1(node_jk_repr)
         pred = self.Bar_mlp_2(paddle.concat([node_ij_repr, node_jk_repr], 1))
-        Bar_dist_id = paddle.cast(feed_dict['Ba_bond_angle'] / np.pi * self.Bar_vocab, 'int64')
+
+        Bar_dist_id = paddle.cast(Ba_bond_angle / np.pi * self.Bar_vocab, 'int64')
         loss = self.Bar_loss(pred, Bar_dist_id)
-        # loss = self.Bar_loss(pred, feed_dict['Ba_bond_angle'] / np.pi)
         return loss
 
-    def _get_Dar_loss(self, feed_dict, node_repr):
-        node_i_repr = paddle.gather(node_repr, feed_dict['Da_node_i'])
-        node_j_repr = paddle.gather(node_repr, feed_dict['Da_node_j'])
-        node_k_repr = paddle.gather(node_repr, feed_dict['Da_node_k'])
-        node_l_repr = paddle.gather(node_repr, feed_dict['Da_node_l'])
+    def _get_Dar_loss(self, Da_node_i, Da_node_j, Da_node_k, Da_node_l, Da_bond_angle, Da_node_i_extra,
+                      Da_node_j_extra, Da_node_k_extra, Da_node_l_extra, Da_bond_angle_extra, node_repr):
+        node_i_repr = paddle.gather(node_repr, Da_node_i)
+        node_j_repr = paddle.gather(node_repr, Da_node_j)
+        node_k_repr = paddle.gather(node_repr, Da_node_k)
+        node_l_repr = paddle.gather(node_repr, Da_node_l)
         node_ijk_repr = paddle.concat([node_i_repr, node_j_repr, node_k_repr], 1)
         node_jkl_repr = paddle.concat([node_j_repr, node_k_repr, node_l_repr], 1)
         node_ijk_repr = self.Dar_mlp1(node_ijk_repr)
         node_jkl_repr = self.Dar_mlp1(node_jkl_repr)
         pred = self.Dar_mlp2(paddle.concat([node_ijk_repr, node_jkl_repr], 1))
-        Dar_dist_id = paddle.cast(((feed_dict['Da_bond_angle'] / np.pi)) * self.Dar_vocab, 'int64')
+
+        Dar_dist_id = paddle.cast(((Da_bond_angle / np.pi)) * self.Dar_vocab, 'int64')
         loss = self.Dar_loss(pred, Dar_dist_id)
 
-        node_i_repr_extra = paddle.gather(node_repr, feed_dict['Da_node_i_extra'])
-        node_j_repr_extra = paddle.gather(node_repr, feed_dict['Da_node_j_extra'])
-        node_k_repr_extra = paddle.gather(node_repr, feed_dict['Da_node_k_extra'])
-        node_l_repr_extra = paddle.gather(node_repr, feed_dict['Da_node_l_extra'])
+        node_i_repr_extra = paddle.gather(node_repr, Da_node_i_extra)
+        node_j_repr_extra = paddle.gather(node_repr, Da_node_j_extra)
+        node_k_repr_extra = paddle.gather(node_repr, Da_node_k_extra)
+        node_l_repr_extra = paddle.gather(node_repr, Da_node_l_extra)
         node_ijk_repr_extra = paddle.concat([node_i_repr_extra, node_j_repr_extra, node_k_repr_extra], 1)
         node_kjl_repr_extra = paddle.concat([node_k_repr_extra, node_j_repr_extra, node_l_repr_extra], 1)
         node_ijk_repr_extra = self.Dar_mlp1(node_ijk_repr_extra)
         node_kjl_repr_extra = self.Dar_mlp1(node_kjl_repr_extra)
         pred_extra = self.Dar_mlp2(paddle.concat([node_ijk_repr_extra, node_kjl_repr_extra], 1))
-        Dar_dist_id_extra = paddle.cast((feed_dict['Da_bond_angle_extra'] / np.pi) * self.Dar_vocab, 'int64')
+
+        Dar_dist_id_extra = paddle.cast((Da_bond_angle_extra / np.pi) * self.Dar_vocab, 'int64')
         loss_extra = self.Dar_loss_extra(pred_extra, Dar_dist_id_extra)
 
         return loss + loss_extra
 
-    def _get_Blr_loss(self, feed_dict, node_repr):
-        node_i_repr = paddle.gather(node_repr, feed_dict['Bl_node_i'])
-        node_j_repr = paddle.gather(node_repr, feed_dict['Bl_node_j'])
+    def _get_Blr_loss(self, Bl_node_i, Bl_node_j, Bl_bond_length, node_repr):
+        node_i_repr = paddle.gather(node_repr, Bl_node_i)
+        node_j_repr = paddle.gather(node_repr, Bl_node_j)
         node_ij_repr = paddle.concat([node_i_repr, node_j_repr], 1)
         pred = self.Blr_mlp(node_ij_repr)
-        loss = self.Blr_loss(pred, feed_dict['Bl_bond_length'])
+
+        loss = self.Blr_loss(pred, Bl_bond_length)
         return loss
 
-    def _get_Adc_loss(self, feed_dict, node_repr):
-        node_i_repr = paddle.gather(node_repr, feed_dict['Ad_node_i'])
-        node_j_repr = paddle.gather(node_repr, feed_dict['Ad_node_j'])
+    def _get_Adc_loss(self, Ad_node_i, Ad_node_j, Ad_atom_dist, node_repr):
+        node_i_repr = paddle.gather(node_repr, Ad_node_i)
+        node_j_repr = paddle.gather(node_repr, Ad_node_j)
         node_ij_repr = paddle.concat([node_i_repr, node_j_repr], 1)
         logits = self.Adc_mlp(node_ij_repr)
-        loss = self.Adc_loss(logits, feed_dict['Ad_atom_dist'])
+
+        loss = self.Adc_loss(logits, Ad_atom_dist)
         return loss
 
     def _get_Cl_loss(self, x1, x2, mols, rms=None):
@@ -312,47 +316,128 @@ class GeoPredModel_all(nn.Layer):
         """
         Build the network.
         """
-        node_repr, edge_repr, graph_repr = self.compound_encoder.forward(
-            graph_dict['atom_bond_graph'], graph_dict['bond_angle_graph'], graph_dict['dihes_angle_graph'], 1)
-        node_repr_conf_cl, edge_repr_conf_cl, graph_repr_conf_cl = self.compound_encoder.forward(
-            graph_dict['atom_bond_graph_conf_cl'], graph_dict['bond_angle_graph_conf_cl'],
-            graph_dict['dihes_angle_graph_conf_cl'], 1)
+        node_repr, edge_repr, graph_repr = self.compound_encoder.forward(graph_dict['atom_bond_graph'],
+                                                                                  graph_dict['bond_angle_graph'],
+                                                                                  graph_dict['dihes_angle_graph'])
+
+        node_repr_conf_cl_1, edge_repr_conf_cl_1, graph_repr_conf_cl_1 = self.compound_encoder.forward(
+            graph_dict['atom_bond_graph_conf_cl_1'], graph_dict['bond_angle_graph_conf_cl_1'],
+            graph_dict['dihes_angle_graph_conf_cl_1'])
+
         masked_node_repr, masked_edge_repr, masked_graph_repr = self.compound_encoder.forward(
             graph_dict['masked_atom_bond_graph'], graph_dict['masked_bond_angle_graph'],
-            graph_dict['masked_dihes_angle_graph'], 1)
+            graph_dict['masked_dihes_angle_graph'])
+
+        masked_node_repr_conf_cl_1, masked_edge_repr_conf_cl_1, masked_graph_repr_conf_cl_1 = self.compound_encoder.forward(
+            graph_dict['masked_atom_bond_graph_conf_cl_1'], graph_dict['masked_bond_angle_graph_conf_cl_1'],
+            graph_dict['masked_dihes_angle_graph_conf_cl_1'])
+
         sub_losses = {}
         if 'Cm' in self.pretrain_tasks:
-            sub_losses['Cm_loss'] = self._get_Cm_loss(feed_dict, node_repr)
-            sub_losses['Cm_loss'] += self._get_Cm_loss(feed_dict, masked_node_repr)
-        if 'En' in self.pretrain_tasks:
-            sub_losses['En_loss'] = self._get_En_loss(feed_dict, graph_repr)
-            sub_losses['En_loss'] += self._get_En_loss(feed_dict, graph_repr_conf_cl)
+
+            sub_losses['Cm_loss'] = self._get_Cm_loss(feed_dict['Cm_node_i'], feed_dict['Cm_context_id'], node_repr)
+            sub_losses['Cm_loss'] += self._get_Cm_loss(feed_dict['Cm_node_i'], feed_dict['Cm_context_id'], masked_node_repr)
+
+            sub_losses['Cm_loss'] += self._get_Cm_loss(feed_dict['Cm_node_i_conf_cl_1'], feed_dict['Cm_context_id_conf_cl_1'], node_repr_conf_cl_1)
+            sub_losses['Cm_loss'] += self._get_Cm_loss(feed_dict['Cm_node_i_conf_cl_1'], feed_dict['Cm_context_id_conf_cl_1'], masked_node_repr_conf_cl_1)
+
         if 'Fg' in self.pretrain_tasks:
+
             sub_losses['Fg_loss'] = self._get_Fg_loss(feed_dict, graph_repr)
             sub_losses['Fg_loss'] += self._get_Fg_loss(feed_dict, masked_graph_repr)
+
+            sub_losses['Fg_loss'] += self._get_Fg_loss(feed_dict, graph_repr_conf_cl_1)
+            sub_losses['Fg_loss'] += self._get_Fg_loss(feed_dict, masked_graph_repr_conf_cl_1)
+
         if 'Bar' in self.pretrain_tasks:
-            sub_losses['Bar_loss'] = self._get_Bar_loss(feed_dict, node_repr)
-            sub_losses['Bar_loss'] += self._get_Bar_loss(feed_dict, masked_node_repr)
+
+            sub_losses['Bar_loss'] = self._get_Bar_loss(feed_dict['Ba_node_i'], feed_dict['Ba_node_j'],
+                                                        feed_dict['Ba_node_k'], feed_dict['Ba_bond_angle'], node_repr)
+            sub_losses['Bar_loss'] += self._get_Bar_loss(feed_dict['Ba_node_i'], feed_dict['Ba_node_j'],
+                                                         feed_dict['Ba_node_k'], feed_dict['Ba_bond_angle'],
+                                                         masked_node_repr)
+
+            sub_losses['Bar_loss'] += self._get_Bar_loss(feed_dict['Ba_node_i_conf_cl_1'],
+                                                         feed_dict['Ba_node_j_conf_cl_1'],
+                                                         feed_dict['Ba_node_k_conf_cl_1'],
+                                                         feed_dict['Ba_bond_angle_conf_cl_1'], node_repr_conf_cl_1)
+            sub_losses['Bar_loss'] += self._get_Bar_loss(feed_dict['Ba_node_i_conf_cl_1'],
+                                                         feed_dict['Ba_node_j_conf_cl_1'],
+                                                         feed_dict['Ba_node_k_conf_cl_1'],
+                                                         feed_dict['Ba_bond_angle_conf_cl_1'],
+                                                         masked_node_repr_conf_cl_1)
+
         if 'Dar' in self.pretrain_tasks:
-            sub_losses['Dar_loss'] = self._get_Dar_loss(feed_dict, node_repr)
-            sub_losses['Dar_loss'] += self._get_Dar_loss(feed_dict, masked_node_repr)
+
+            sub_losses['Dar_loss'] = self._get_Dar_loss(feed_dict['Da_node_i'], feed_dict['Da_node_j'],
+                                                        feed_dict['Da_node_k'], feed_dict['Da_node_l'],
+                                                        feed_dict['Da_bond_angle'], feed_dict['Da_node_i_extra'],
+                                                        feed_dict['Da_node_j_extra'], feed_dict['Da_node_k_extra'],
+                                                        feed_dict['Da_node_l_extra'], feed_dict['Da_bond_angle_extra']
+                                                        , node_repr)
+            sub_losses['Dar_loss'] += self._get_Dar_loss(feed_dict['Da_node_i'], feed_dict['Da_node_j'],
+                                                         feed_dict['Da_node_k'], feed_dict['Da_node_l'],
+                                                         feed_dict['Da_bond_angle'], feed_dict['Da_node_i_extra'],
+                                                         feed_dict['Da_node_j_extra'], feed_dict['Da_node_k_extra'],
+                                                         feed_dict['Da_node_l_extra'], feed_dict['Da_bond_angle_extra']
+                                                         , masked_node_repr)
+
+            sub_losses['Dar_loss'] += self._get_Dar_loss(feed_dict['Da_node_i_conf_cl_1'], feed_dict['Da_node_j_conf_cl_1'],
+                                                         feed_dict['Da_node_k_conf_cl_1'], feed_dict['Da_node_l_conf_cl_1'],
+                                                         feed_dict['Da_bond_angle_conf_cl_1'], feed_dict['Da_node_i_extra_conf_cl_1'],
+                                                         feed_dict['Da_node_j_extra_conf_cl_1'], feed_dict['Da_node_k_extra_conf_cl_1'],
+                                                         feed_dict['Da_node_l_extra_conf_cl_1'], feed_dict['Da_bond_angle_extra_conf_cl_1']
+                                                         , node_repr_conf_cl_1)
+            sub_losses['Dar_loss'] += self._get_Dar_loss(feed_dict['Da_node_i_conf_cl_1'], feed_dict['Da_node_j_conf_cl_1'],
+                                                         feed_dict['Da_node_k_conf_cl_1'], feed_dict['Da_node_l_conf_cl_1'],
+                                                         feed_dict['Da_bond_angle_conf_cl_1'], feed_dict['Da_node_i_extra_conf_cl_1'],
+                                                         feed_dict['Da_node_j_extra_conf_cl_1'], feed_dict['Da_node_k_extra_conf_cl_1'],
+                                                         feed_dict['Da_node_l_extra_conf_cl_1'], feed_dict['Da_bond_angle_extra_conf_cl_1']
+                                                         , masked_node_repr_conf_cl_1)
+
         if 'Blr' in self.pretrain_tasks:
-            sub_losses['Blr_loss'] = self._get_Blr_loss(feed_dict, node_repr)
-            sub_losses['Blr_loss'] += self._get_Blr_loss(feed_dict, masked_node_repr)
+
+            sub_losses['Blr_loss'] = self._get_Blr_loss(feed_dict['Bl_node_i'], feed_dict['Bl_node_j'],
+                                                        feed_dict['Bl_bond_length'], node_repr)
+            sub_losses['Blr_loss'] += self._get_Blr_loss(feed_dict['Bl_node_i'], feed_dict['Bl_node_j'],
+                                                         feed_dict['Bl_bond_length'], masked_node_repr)
+
+            sub_losses['Blr_loss'] += self._get_Blr_loss(feed_dict['Bl_node_i_conf_cl_1'], feed_dict['Bl_node_j_conf_cl_1'],
+                                                         feed_dict['Bl_bond_length_conf_cl_1'], node_repr_conf_cl_1)
+            sub_losses['Blr_loss'] += self._get_Blr_loss(feed_dict['Bl_node_i_conf_cl_1'], feed_dict['Bl_node_j_conf_cl_1'],
+                                                         feed_dict['Bl_bond_length_conf_cl_1'], masked_node_repr_conf_cl_1)
+
+
         if 'Adc' in self.pretrain_tasks:
-            sub_losses['Adc_loss'] = self._get_Adc_loss(feed_dict, node_repr)
-            sub_losses['Adc_loss'] += self._get_Adc_loss(feed_dict, masked_node_repr)
+
+            sub_losses['Adc_loss'] = self._get_Adc_loss(feed_dict['Ad_node_i'], feed_dict['Ad_node_j'],
+                                                        feed_dict['Ad_atom_dist'], node_repr)
+            sub_losses['Adc_loss'] += self._get_Adc_loss(feed_dict['Ad_node_i'], feed_dict['Ad_node_j'],
+                                                         feed_dict['Ad_atom_dist'], masked_node_repr)
+
+            sub_losses['Adc_loss'] += self._get_Adc_loss(feed_dict['Ad_node_i_conf_cl_1'], feed_dict['Ad_node_j_conf_cl_1'],
+                                                         feed_dict['Ad_atom_dist_conf_cl_1'], node_repr_conf_cl_1)
+            sub_losses['Adc_loss'] += self._get_Adc_loss(feed_dict['Ad_node_i_conf_cl_1'], feed_dict['Ad_node_j_conf_cl_1'],
+                                                         feed_dict['Ad_atom_dist_conf_cl_1'], masked_node_repr_conf_cl_1)
+
         if 'Cl' in self.pretrain_tasks:
-            sub_losses['Cl_loss'] = self._get_Cl_loss(F.normalize(graph_repr_conf_cl, axis=1),
-                                                      F.normalize(masked_graph_repr, axis=1), fp_score,
-                                                      rms=feed_dict["rms"])
+            sub_losses['Cl_loss'] = self._get_Cl_loss(F.normalize(graph_repr_conf_cl_1, axis=1),
+                                                      F.normalize(masked_graph_repr, axis=1), feed_dict["fp_score"],
+                                                      rms=feed_dict["rms_list"])
+            sub_losses['Cl_loss'] += self._get_Cl_loss(F.normalize(graph_repr, axis=1),
+                                                       F.normalize(masked_graph_repr_conf_cl_1, axis=1), feed_dict["fp_score"],
+                                                       rms=feed_dict["rms_list"])
+
+
         loss = 0
         cnt = 0
 
         for name in sub_losses:
+
             precision = paddle.exp(-self.coefs[cnt] * 2) / 2.0
             loss += precision * sub_losses[name] + paddle.log(paddle.exp(self.coefs[cnt]) + 1)
             cnt = cnt + 1
+
         if return_subloss:
             return loss, sub_losses, self.coefs
         else:
