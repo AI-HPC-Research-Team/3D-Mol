@@ -16,10 +16,13 @@
 Basic Encoder for compound atom/bond features.
 """
 import numpy as np
+
+import paddle
 import paddle.nn as nn
+import pgl
 
 from utils.compound_tools import CompoundKit
-from networks.basic_block import RBF
+from networks.basic_block import RBF, MLP
 
 class AtomEmbedding(nn.Layer):
     """
@@ -128,11 +131,7 @@ class BondFloatRBF(nn.Layer):
 
         if rbf_params is None:
             self.rbf_params = {
-                'bond_length': (np.arange(0, 2, 0.1), 10.0),  # (centers, gamma)
-                'dis': (np.arange(0, 2, 0.1), 10.0),  # (centers, gamma)
-                'dis-1': (np.arange(0, 2, 0.1), 10.0),  # (centers, gamma)
-                'dis-6': (np.arange(0, 2, 0.1), 10.0),  # (centers, gamma)
-                'dis-12': (np.arange(0, 2, 0.1), 10.0),  # (centers, gamma)
+                'bond_length': (np.arange(0, 2, 0.1), 10.0),
                 'dihes_angle': (np.arange(0, np.pi, 0.1), 10.0)
             }
         else:
@@ -171,7 +170,7 @@ class BondAngleFloatRBF(nn.Layer):
 
         if rbf_params is None:
             self.rbf_params = {
-                'bond_angle': (np.arange(0, np.pi, 0.1), 10.0),  # (centers, gamma)
+                'bond_angle': (np.arange(0, np.pi, 0.1), 10.0),
                 'dihes_angle': (np.arange(0, np.pi, 0.1), 10.0)
             }
         else:
@@ -197,3 +196,4 @@ class BondAngleFloatRBF(nn.Layer):
             rbf_x = self.rbf_list[i](x)
             out_embed += self.linear_list[i](rbf_x)
         return out_embed
+
