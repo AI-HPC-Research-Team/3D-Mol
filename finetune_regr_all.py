@@ -17,18 +17,21 @@
 Finetune:to do some downstream task
 """
 
-from os.path import basename
+import os
+from os.path import join, exists, basename
 import argparse
 import numpy as np
 import time
 import paddle
 import paddle.nn as nn
-from model_zoo.gem_model import GeoGNNModel_all
+import pgl
+
+from model_zoo.gem_model import GeoPredModel, GeoGNNModel
 from utils.basic_utils import load_json_config
 from datasets.inmemory_dataset import InMemoryDataset
 
-from src.model import DownstreamModel_all
-from src.featurizer import DownstreamTransformFn_all, DownstreamCollateFn_all
+from src.model import DownstreamModel
+from src.featurizer import DownstreamTransformFn, DownstreamCollateFn
 from src.utils import get_dataset, create_splitter, get_downstream_task_names, get_dataset_stat, \
         calc_rocauc_score, calc_rmse, calc_mae, exempt_parameters
 
@@ -56,7 +59,7 @@ def train(args, model, label_mean, label_std, train_dataset, collate_fn, criteri
         dihes_angle_graphs = dihes_angle_graphs.tensor()
         scaled_labels = (labels - label_mean) / (label_std + 1e-7)
         scaled_labels = paddle.to_tensor(scaled_labels, 'float32')
-        preds = model(atom_bond_graphs, bond_angle_graphs, dihes_angle_graphs, 1)
+        preds = model(atom_bond_graphs, bond_angle_graphs, dihes_angle_graphs)
         loss = criterion(preds, scaled_labels)
         loss.backward()
         if encoder_opt is not None:
@@ -71,7 +74,15 @@ def train(args, model, label_mean, label_std, train_dataset, collate_fn, criteri
     return np.mean(list_loss)
 
 
-def evaluate(args, model, label_mean, label_std, test_dataset, collate_fn, metric):
+def evaluate(
+        args, 
+        model, label_mean, label_std,
+        test_dataset, collate_fn, metric):
+    """
+    Define the evaluate function
+    In the dataset, a proportion of labels are blank. So we use a `valid` tensor 
+    to help eliminate these blank labels in both training and evaluation phase.
+    """
     data_gen = test_dataset.get_data_loader(
             batch_size=args.batch_size, 
             num_workers=args.num_workers, 
@@ -85,7 +96,7 @@ def evaluate(args, model, label_mean, label_std, test_dataset, collate_fn, metri
         bond_angle_graphs = bond_angle_graphs.tensor()
         dihes_angle_graphs = dihes_angle_graphs.tensor()
         labels = paddle.to_tensor(labels, 'float32')
-        scaled_preds = model(atom_bond_graphs, bond_angle_graphs, dihes_angle_graphs, 1)
+        scaled_preds = model(atom_bond_graphs, bond_angle_graphs, dihes_angle_graphs)
         preds = scaled_preds.numpy() * label_std + label_mean
         total_pred.append(preds)
         total_label.append(labels.numpy())
@@ -98,10 +109,13 @@ def evaluate(args, model, label_mean, label_std, test_dataset, collate_fn, metri
 
 
 def get_label_stat(dataset):
+    """tbd"""
     labels = np.array([data['label'] for data in dataset])
     return np.min(labels), np.max(labels), np.mean(labels)
 
+
 def get_metric(dataset_name):
+    """tbd"""
     if dataset_name in ['esol', 'freesolv', 'lipophilicity']:
         return 'rmse'
     elif dataset_name in ['qm7', 'qm8', 'qm9', 'qm9_gdb']:
@@ -111,30 +125,40 @@ def get_metric(dataset_name):
 
 
 def main(args):
-
+    """
+    Call the configuration function of the model, build the model and load data, then start training.
+    model_config:
+        a json file  with the hyperparameters,such as dropout rate ,learning rate,num tasks and so on;
+    num_tasks:
+        it means the number of task that each dataset contains, it's related to the dataset;
+    """
+    ### config for the body
     compound_encoder_config = load_json_config(args.compound_encoder_config)
     if not args.dropout_rate is None:
         compound_encoder_config['dropout_rate'] = args.dropout_rate
 
+    ### config for the downstream task
     task_type = 'regr'
     metric = get_metric(args.dataset_name)
     task_names = get_downstream_task_names(args.dataset_name, args.data_path)
     dataset_stat = get_dataset_stat(args.dataset_name, args.data_path, task_names)
     label_mean = np.reshape(dataset_stat['mean'], [1, -1])
     label_std = np.reshape(dataset_stat['std'], [1, -1])
-
+    ### load data
+    pt_model_config = load_json_config("model_configs/pretrain_gem.json")
     if args.task == 'data':
         print('Preprocessing data...')
         dataset = get_dataset(args.dataset_name, args.data_path, task_names)
-        transform_fn = DownstreamTransformFn_all()
+        transform_fn = DownstreamTransformFn(pt_model_config['pretrain_tasks'], pt_model_config['mask_ratio'])
         dataset.transform(transform_fn, num_workers=args.num_workers)
+        a_temp = dataset._clean()
         dataset.save_data(args.cached_data_path)
         return
     else:
         if args.cached_data_path is None or args.cached_data_path == "":
             print('Processing data...')
             dataset = get_dataset(args.dataset_name, args.data_path, task_names)
-            transform_fn = DownstreamTransformFn_all()
+            transform_fn = DownstreamTransformFn(model_config['pretrain_tasks'], model_config['mask_ratio'])
             dataset.transform(transform_fn, num_workers=args.num_workers)
         else:
             print('Read preprocessing data...')
@@ -144,11 +168,10 @@ def main(args):
         model_config['dropout_rate'] = args.dropout_rate
     model_config['task_type'] = task_type
     model_config['num_tasks'] = len(task_names)
-    print('model_config:')
-    print(model_config)
 
-    compound_encoder = GeoGNNModel_all(compound_encoder_config)
-    model = DownstreamModel_all(model_config, compound_encoder)
+    ### build model
+    compound_encoder = GeoGNNModel(compound_encoder_config)
+    model = DownstreamModel(model_config, compound_encoder_all)
     if metric == 'square':
         criterion = nn.MSELoss()
     else:
@@ -156,6 +179,7 @@ def main(args):
     encoder_params = compound_encoder.parameters()
     head_params = exempt_parameters(model.parameters(), encoder_params)
     encoder_opt = paddle.optimizer.Adam(args.encoder_lr, parameters=encoder_params)
+    # encoder_opt = None
     head_opt = paddle.optimizer.Adam(args.head_lr, parameters=head_params)
     print('Total param num: %s' % (len(model.parameters())))
     if encoder_opt is not None:
@@ -167,7 +191,6 @@ def main(args):
     if not args.init_model is None and not args.init_model == "":
         compound_encoder.set_state_dict(paddle.load(args.init_model))
         print('Load state_dict from %s' % args.init_model)
-
     splitter = create_splitter(args.split_type)
     train_dataset, valid_dataset, test_dataset = splitter.split(
             dataset, frac_train=0.8, frac_valid=0.1, frac_test=0.1)
@@ -177,9 +200,10 @@ def main(args):
     print('Valid min/max/mean %s/%s/%s' % get_label_stat(valid_dataset))
     print('Test min/max/mean %s/%s/%s' % get_label_stat(test_dataset))
 
+    ### start train
     list_val_metric, list_test_metric = [], []
     list_train_loss = []
-    collate_fn = DownstreamCollateFn_all(
+    collate_fn = DownstreamCollateFn(
             atom_names=compound_encoder_config['atom_names'], 
             bond_names=compound_encoder_config['bond_names'],
             bond_float_names=compound_encoder_config['bond_float_names'],
@@ -199,16 +223,7 @@ def main(args):
         print("epoch:%s val/%s:%s" % (epoch_id, metric, val_metric))
         print("epoch:%s test/%s:%s" % (epoch_id, metric, test_metric))
         print("epoch:%s test/%s_by_eval:%s" % (epoch_id, metric, test_metric_by_eval))
-        paddle.save(compound_encoder.state_dict(), '%s/epoch%d/compound_encoder.pdparams' % (args.model_dir, epoch_id))
-        paddle.save(model.state_dict(), '%s/epoch%d/model.pdparams' % (args.model_dir, epoch_id))
         print("Time used:%ss" % (time.time() - s))
-
-    print("list_train_loss")
-    print(list_train_loss)
-    print("list_val_metric")
-    print(list_val_metric)
-    print("list_test_metric")
-    print(list_test_metric)
 
     outs = {
         'model_config': basename(args.model_config).replace('.json', ''),
@@ -231,6 +246,8 @@ def main(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    gen = paddle.seed(4321)
+    np.random.seed(4321)
     parser.add_argument("--task", choices=['train', 'data'], default='train')
 
     parser.add_argument("--batch_size", type=int, default=32)
@@ -246,7 +263,7 @@ if __name__ == '__main__':
 
     parser.add_argument("--compound_encoder_config", type=str)
     parser.add_argument("--model_config", type=str)
-    parser.add_argument("--init_model", type=str)
+    parser.add_argument("--init_model", type=str, default=None)
     parser.add_argument("--model_dir", type=str)
     parser.add_argument("--encoder_lr", type=float, default=0.001)
     parser.add_argument("--head_lr", type=float, default=0.001)
