@@ -1,5 +1,5 @@
 #!/usr/bin/python                                                                                  
-#-*-coding:utf-8-*- 
+# -*-coding:utf-8-*-
 #   Copyright (c) 2020 PaddlePaddle Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,27 +13,45 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+GEM pretrain
+"""
+
+import os
+from os.path import join, exists, basename
+import sys
 import argparse
 import time
 import numpy as np
+from glob import glob
+import logging
 import paddle
+
 from datasets.inmemory_dataset import InMemoryDataset
 from utils.basic_utils import load_json_config
-from featurizers.gem_featurizer import GeoPredTransformFn, GeoPredCollateFn_all_cl
-from model_zoo.gem_model import GeoGNNModel_all, GeoPredModel_all
+from featurizers.gem_featurizer import GeoPredTransformFn, GeoPredCollateFn
+from model_zoo.gem_model import GeoPredModel
+# from src.utils import exempt_parameters
 
-def train(model, optimizer, data_gen):
+import copy
+
+
+def train(args, model, optimizer, data_gen, dwa=None):
+    """tbd"""
     model.train()
+
+    steps = get_steps_per_epoch(args)
     step = 0
     list_loss = []
     dict_loss = {}
     for graph_dict, feed_dict, mol in data_gen:
         print('rank:%s step:%s' % (0, step))
+
         for k in graph_dict:
             graph_dict[k] = graph_dict[k].tensor()
         for k in feed_dict:
             feed_dict[k] = paddle.to_tensor(feed_dict[k])
-        train_loss, sub_losses, coef = model(graph_dict, feed_dict, mol, return_subloss=True)
+        train_loss, sub_losses, coef = model(graph_dict, feed_dict, mol, return_subloss=True, dwa=dwa)
 
         for name in sub_losses:
             if not name in dict_loss:
@@ -50,8 +68,10 @@ def train(model, optimizer, data_gen):
 
 
 @paddle.no_grad()
-def evaluate(model, data_gen):
+def evaluate(args, model, data_gen, dict_loss=None):
+    """tbd"""
     model.eval()
+
     dict_loss = {'loss': []}
     coefs = None
     step = 0
@@ -74,7 +94,21 @@ def evaluate(model, data_gen):
     return dict_loss, coefs
 
 
+def get_steps_per_epoch(args):
+    """tbd"""
+    # add as argument
+    if args.dataset == 'zinc':
+        train_num = int(20000000 * (1 - args.test_ratio))
+    else:
+        raise ValueError(args.dataset)
+    if args.DEBUG:
+        train_num = 100
+    steps_per_epoch = int(train_num / args.batch_size)
+    return steps_per_epoch
+
+
 def load_smiles_to_dataset(data_path):
+    """tbd"""
     files = [data_path]
     data_list = []
     for file in files:
@@ -86,6 +120,7 @@ def load_smiles_to_dataset(data_path):
 
 
 def main(args):
+    # time.sleep(3300)
     s = time.time()
     compound_encoder_config = load_json_config(args.compound_encoder_config)
     model_config = load_json_config(args.model_config)
@@ -93,18 +128,21 @@ def main(args):
         compound_encoder_config['dropout_rate'] = args.dropout_rate
         model_config['dropout_rate'] = args.dropout_rate
     print("load config Time used:%ss" % (time.time() - s))
-
+    ### load data
     if args.task == 'data':
         print('Preprocessing data...')
         dataset = load_smiles_to_dataset(args.data_path)
         if args.DEBUG:
             dataset = dataset[100:180]
+        # dataset = dataset[dist.get_rank()::dist.get_world_size()]
         smiles_lens = [len(smiles) for smiles in dataset]
         print('Total size:%s' % (len(dataset)))
         print('Dataset smiles min/max/avg length: %s/%s/%s' % (
             np.min(smiles_lens), np.max(smiles_lens), np.mean(smiles_lens)))
         transform_fn = GeoPredTransformFn(model_config['pretrain_tasks'], model_config['mask_ratio'])
+        # this step will be time consuming due to rdkit 3d calculation
         dataset.transform(transform_fn, num_workers=args.num_workers)
+        a_temp = dataset._none_remove()
         dataset.save_data(args.cached_data_path)
         return
     else:
@@ -113,48 +151,55 @@ def main(args):
             dataset = load_smiles_to_dataset(args.data_path)
             if args.DEBUG:
                 dataset = dataset[100:180]
+            # dataset = dataset[dist.get_rank()::dist.get_world_size()]
             smiles_lens = [len(smiles) for smiles in dataset]
             print('Total size:%s' % (len(dataset)))
             print('Dataset smiles min/max/avg length: %s/%s/%s' % (
                 np.min(smiles_lens), np.max(smiles_lens), np.mean(smiles_lens)))
             transform_fn = GeoPredTransformFn(model_config['pretrain_tasks'], model_config['mask_ratio'])
+            # this step will be time consuming due to rdkit 3d calculation
             dataset.transform(transform_fn, num_workers=args.num_workers)
         else:
             print('Read preprocessing data...')
             dataset = InMemoryDataset(npz_data_path=args.cached_data_path)
+            sl_temp = dataset._smiles_remove()
+            en_temp = dataset._energy_remove()
             if args.DEBUG:
                 dataset = dataset[0:1000]
     print("load data Time used:%ss" % (time.time() - s))
 
-    compound_encoder = GeoGNNModel_all(compound_encoder_config)
-    model = GeoPredModel_all(model_config, compound_encoder)
+    """tbd"""
+    compound_encoder = GeoGNNModel(compound_encoder_config)
+    model = GeoPredModel(model_config, compound_encoder)
     opt = paddle.optimizer.Adam(learning_rate=args.lr, parameters=model.parameters())
     print('Total param num: %s' % (len(model.parameters())))
     for i, param in enumerate(model.named_parameters()):
         print(i, param[0], param[1].name)
+
     if not args.init_model is None and not args.init_model == "":
         compound_encoder.set_state_dict(paddle.load(args.init_model))
         print('Load state_dict from %s' % args.init_model)
     print("init model Time used:%ss" % (time.time() - s))
+
     test_index = int(len(dataset) * (1 - args.test_ratio))
     train_dataset = dataset[:test_index]
     test_dataset = dataset[test_index:]
     del dataset
     print("Train/Test num: %s/%s" % (len(train_dataset), len(test_dataset)))
 
-    collate_fn = GeoPredCollateFn_all_cl(
-            atom_names=compound_encoder_config['atom_names'],
-            bond_names=compound_encoder_config['bond_names'],
-            bond_float_names=compound_encoder_config['bond_float_names'],
-            bond_angle_float_names=compound_encoder_config['bond_angle_float_names'],
-            pretrain_tasks=model_config['pretrain_tasks'],
-            mask_ratio=model_config['mask_ratio'],
-            Cm_vocab=model_config['Cm_vocab'])
+    collate_fn = GeoPredCollateFn(
+        atom_names=compound_encoder_config['atom_names'],
+        bond_names=compound_encoder_config['bond_names'],
+        bond_float_names=compound_encoder_config['bond_float_names'],
+        bond_angle_float_names=compound_encoder_config['bond_angle_float_names'],
+        pretrain_tasks=model_config['pretrain_tasks'],
+        mask_ratio=model_config['mask_ratio'],
+        Cm_vocab=model_config['Cm_vocab'])
     train_data_gen = train_dataset.get_data_loader(
-            batch_size=args.batch_size,
-            num_workers=2,
-            shuffle=True,
-            collate_fn=collate_fn)
+        batch_size=args.batch_size,
+        num_workers=2,
+        shuffle=True,
+        collate_fn=collate_fn)
     del train_dataset
     test_data_gen = test_dataset.get_data_loader(
         batch_size=args.batch_size,
@@ -168,29 +213,29 @@ def main(args):
     min_test = 1000000
     for epoch_id in range(args.max_epoch):
         s = time.time()
-        train_loss, _ = train(model, opt, train_data_gen)
-        test_loss, coef = evaluate(model, test_data_gen)
+        train_loss, _ = train(args, model, opt, train_data_gen)
+        test_loss, coef = evaluate(args, model, test_data_gen)
         paddle.save(compound_encoder.state_dict(), '%s/epoch%d.pdparams' % (args.model_dir, epoch_id))
         if min_test > test_loss['loss']:
             min_test = test_loss['loss']
             paddle.save(compound_encoder.state_dict(),
-                        '%s/regr.pdparams' % (args.model_dir + "/pretrain_models"))
+                        '%s/regr.pdparams' % (args.model_dir + "/pretrain_models-chemrl_gem"))
             paddle.save(compound_encoder.state_dict(),
-                        '%s/class.pdparams' % (args.model_dir + "/pretrain_models"))
+                        '%s/class.pdparams' % (args.model_dir + "/pretrain_models-chemrl_gem"))
         list_test_loss.append(test_loss['loss'])
         list_train_loss.append(train_loss)
-        print(coef)
         print("epoch:%d train/loss:%s" % (epoch_id, train_loss))
         print("epoch:%d test/loss:%s" % (epoch_id, test_loss))
         print("Time used:%ss" % (time.time() - s))
-    print("list_train_loss")
-    print(list_train_loss)
-    print("list_test_loss")
-    print(list_test_loss)
+
+    if not args.distributed:
+        print('Best epoch id:%s' % np.argmin(list_test_loss))
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    gen = paddle.seed(4321)
+    np.random.seed(4321)
     parser.add_argument("--task", choices=['train', 'data'], default='train')
     parser.add_argument("--DEBUG", action='store_true', default=False)
     parser.add_argument("--distributed", action='store_true', default=False)
@@ -209,3 +254,4 @@ if __name__ == '__main__':
     parser.add_argument("--dropout_rate", type=float, default=0.2)
     args = parser.parse_args()
     main(args)
+    
