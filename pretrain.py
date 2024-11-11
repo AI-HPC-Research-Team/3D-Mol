@@ -30,7 +30,7 @@ import paddle
 from datasets.inmemory_dataset import InMemoryDataset
 from utils.basic_utils import load_json_config
 from featurizers.gem_featurizer import GeoPredTransformFn, GeoPredCollateFn
-from model_zoo.gem_model import GeoPredModel
+from model_zoo.gem_model import GeoPredModel, GeoGNNModel
 # from src.utils import exempt_parameters
 
 import copy
@@ -39,19 +39,17 @@ import copy
 def train(args, model, optimizer, data_gen, dwa=None):
     """tbd"""
     model.train()
-
-    steps = get_steps_per_epoch(args)
     step = 0
     list_loss = []
     dict_loss = {}
-    for graph_dict, feed_dict, mol in data_gen:
+    for graph_dict, feed_dict in data_gen:
         print('rank:%s step:%s' % (0, step))
 
         for k in graph_dict:
             graph_dict[k] = graph_dict[k].tensor()
         for k in feed_dict:
             feed_dict[k] = paddle.to_tensor(feed_dict[k])
-        train_loss, sub_losses, coef = model(graph_dict, feed_dict, mol, return_subloss=True, dwa=dwa)
+        train_loss, sub_losses, coef = model(graph_dict, feed_dict, return_subloss=True, dwa=dwa)
 
         for name in sub_losses:
             if not name in dict_loss:
@@ -75,13 +73,13 @@ def evaluate(args, model, data_gen, dict_loss=None):
     dict_loss = {'loss': []}
     coefs = None
     step = 0
-    for graph_dict, feed_dict, mol in data_gen:
+    for graph_dict, feed_dict in data_gen:
         print('rank:%s step:%s' % (0, step))
         for k in graph_dict:
             graph_dict[k] = graph_dict[k].tensor()
         for k in feed_dict:
             feed_dict[k] = paddle.to_tensor(feed_dict[k])
-        loss, sub_losses, coef = model(graph_dict, feed_dict, mol, return_subloss=True)
+        loss, sub_losses, coef = model(graph_dict, feed_dict, return_subloss=True)
         coefs = coef
         for name in sub_losses:
             if not name in dict_loss:
@@ -92,19 +90,6 @@ def evaluate(args, model, data_gen, dict_loss=None):
         step += 1
     dict_loss = {name: np.mean(dict_loss[name]) for name in dict_loss}
     return dict_loss, coefs
-
-
-def get_steps_per_epoch(args):
-    """tbd"""
-    # add as argument
-    if args.dataset == 'zinc':
-        train_num = int(20000000 * (1 - args.test_ratio))
-    else:
-        raise ValueError(args.dataset)
-    if args.DEBUG:
-        train_num = 100
-    steps_per_epoch = int(train_num / args.batch_size)
-    return steps_per_epoch
 
 
 def load_smiles_to_dataset(data_path):
@@ -142,7 +127,7 @@ def main(args):
         transform_fn = GeoPredTransformFn(model_config['pretrain_tasks'], model_config['mask_ratio'])
         # this step will be time consuming due to rdkit 3d calculation
         dataset.transform(transform_fn, num_workers=args.num_workers)
-        a_temp = dataset._none_remove()
+        dataset._none_remove()
         dataset.save_data(args.cached_data_path)
         return
     else:
@@ -162,8 +147,8 @@ def main(args):
         else:
             print('Read preprocessing data...')
             dataset = InMemoryDataset(npz_data_path=args.cached_data_path)
-            sl_temp = dataset._smiles_remove()
-            en_temp = dataset._energy_remove()
+            dataset._smiles_remove()
+#            dataset._energy_remove()
             if args.DEBUG:
                 dataset = dataset[0:1000]
     print("load data Time used:%ss" % (time.time() - s))
@@ -219,17 +204,14 @@ def main(args):
         if min_test > test_loss['loss']:
             min_test = test_loss['loss']
             paddle.save(compound_encoder.state_dict(),
-                        '%s/regr.pdparams' % (args.model_dir + "/pretrain_models-chemrl_gem"))
+                        '%s/regr.pdparams' % (args.model_dir + "/pretrain_models"))
             paddle.save(compound_encoder.state_dict(),
-                        '%s/class.pdparams' % (args.model_dir + "/pretrain_models-chemrl_gem"))
+                        '%s/class.pdparams' % (args.model_dir + "/pretrain_models"))
         list_test_loss.append(test_loss['loss'])
         list_train_loss.append(train_loss)
         print("epoch:%d train/loss:%s" % (epoch_id, train_loss))
         print("epoch:%d test/loss:%s" % (epoch_id, test_loss))
         print("Time used:%ss" % (time.time() - s))
-
-    if not args.distributed:
-        print('Best epoch id:%s' % np.argmin(list_test_loss))
 
 
 if __name__ == '__main__':
@@ -241,7 +223,7 @@ if __name__ == '__main__':
     parser.add_argument("--distributed", action='store_true', default=False)
     parser.add_argument("--cached_data_path", type=str, default=None)
     parser.add_argument("--batch_size", type=int, default=512)
-    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--num_workers", type=int, default=48)
     parser.add_argument("--max_epoch", type=int, default=100)
     parser.add_argument("--dataset", type=str, default='zinc')
     parser.add_argument("--data_path", type=str, default=None)
