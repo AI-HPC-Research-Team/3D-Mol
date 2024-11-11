@@ -312,7 +312,7 @@ class GeoPredModel(nn.Layer):
         return WeightedNTXentLoss_func(x1, x2, mols, rms=rms)
 
 
-    def forward(self, graph_dict, feed_dict, fp_score, return_subloss=False, dwa=None):
+    def forward(self, graph_dict, feed_dict, return_subloss=False, dwa=None):
         """
         Build the network.
         """
@@ -423,15 +423,14 @@ class GeoPredModel(nn.Layer):
         if 'Cl' in self.pretrain_tasks:
             sub_losses['Cl_loss'] = self._get_Cl_loss(F.normalize(graph_repr_conf_cl_1, axis=1),
                                                       F.normalize(masked_graph_repr, axis=1), feed_dict["fp_score"],
-                                                      rms=feed_dict["rms_list"])
+                                                      rms=feed_dict["rms"])
             sub_losses['Cl_loss'] += self._get_Cl_loss(F.normalize(graph_repr, axis=1),
                                                        F.normalize(masked_graph_repr_conf_cl_1, axis=1), feed_dict["fp_score"],
-                                                       rms=feed_dict["rms_list"])
+                                                       rms=feed_dict["rms"])
 
 
         loss = 0
         cnt = 0
-
         for name in sub_losses:
 
             precision = paddle.exp(-self.coefs[cnt] * 2) / 2.0
