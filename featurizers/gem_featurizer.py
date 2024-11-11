@@ -26,8 +26,7 @@ from rdkit.Chem import AllChem
 from rdkit.Chem import rdDistGeom as molDG
 from sklearn.metrics import pairwise_distances
 import hashlib
-from utils.compound_tools import mol_to_geognn_graph_data_MMFF3d_all, mol_to_geognn_graph_data_MMFF3d_all_cl_conf, \
-    mol_to_geognn_graph_data_MMFF3d_all_cl_conf_eng
+from utils.compound_tools import mol_to_geognn_graph_data_MMFF3d
 import copy
 from rdkit import Chem
 # from utils.compound_tools import Compound3DKit
@@ -192,7 +191,7 @@ def get_pretrain_bond_angle(edges, atom_poses):
 from rdkit import Chem
 from rdkit.Chem import BRICS
 
-class GeoPredTransformFn_3D(object):
+class GeoPredTransformFn(object):
     """Gen features for downstream model"""
 
     def __init__(self, pretrain_tasks, mask_ratio, is_inference=False):
@@ -233,15 +232,17 @@ class GeoPredTransformFn_3D(object):
         Returns:
             data: It contains reshape label and smiles.
         """
-        smiles = raw_data['smiles']
-        print('smiles_raw: ', smiles)
+        smiles = raw_data
+        print('smiles: ', smiles)
 
         mol = AllChem.MolFromSmiles(smiles)
         if mol is None:
             print("error of turning smiles to mol", smiles)
             return None
-
-        data, data_1, rms_12, energy, energy_1, fp3D = mol_to_geognn_graph_data_MMFF3d_all_cl_conf(mol)
+        result = mol_to_geognn_graph_data_MMFF3d(mol)
+        if result is None:
+            return None
+        data, data_1, fp3D = result
 
         if data is None or data_1 is None:
             print("error of turning mol to data", smiles)
@@ -251,23 +252,16 @@ class GeoPredTransformFn_3D(object):
         data_1 = self.prepare_pretrain_task(data_1)
 
         data['smiles'] = smiles
-
-        data['rms_12'] = rms_12
-        data['energy'] = energy
-        data['energy_1'] = energy_1
         
         data['rdf_1'], data['rdf_2'] = fp3D["rdf"]
         data['autocorr3d_1'], data['autocorr3d_2'] = fp3D["autocorr3d"]
         data['morse_1'], data['morse_2'] = fp3D["morse"]
         data['whim_1'], data['whim_2'] = fp3D["whim"]
-        data['getaway_1'], data['getaway_2'] = fp3D["getaway"]
 
         d = list(data_1.keys())
         d_copy = copy.deepcopy(d)
         for i in list(d_copy):
             data.update({i + '_conf_cl_1': data_1.pop(i)})
-        if not self.is_inference:
-            data['label'] = raw_data['label'].reshape([-1])
 
         return data
 
@@ -280,7 +274,7 @@ def cosine_similarity(vec1, vec2):
     return similarity
 
 import pickle
-class GeoPredCollateFn_all_cl(object):
+class GeoPredCollateFn(object):
     """tbd"""
 
     def __init__(self,
@@ -322,7 +316,7 @@ class GeoPredCollateFn_all_cl(object):
         masked_atom_bond_graph_list = []
         masked_bond_angle_graph_list = []
         masked_dihes_angle_graph_list = []
-        rms_12_list = []
+        rms_list = []
         energy_list = []
         mol_list = []
 
@@ -387,7 +381,7 @@ class GeoPredCollateFn_all_cl(object):
 
             rms_atom_dis = cosine_similarity(data['whim_1'], data['whim_2'])
 #            rms_atom_dis = data['rms_12']
-            rms_12_list.append(rms_atom_dis)
+            rms_list.append(rms_atom_dis)
             energy_list.append(data['energy'])
 
             mol_list.append(Chem.MolFromSmiles(data['smiles']))
@@ -657,7 +651,7 @@ class GeoPredCollateFn_all_cl(object):
         self._flat_shapes(masked_dihes_angle_graph.edge_feat)
         graph_dict['masked_dihes_angle_graph'] = masked_dihes_angle_graph
 
-        feed_dict['rms_12'] = np.array(rms_12_list, 'float32')
+        feed_dict['rms'] = np.array(rms_list, 'float32')
         feed_dict['energy_list'] = np.array(energy_list, 'float32')
 
         if 'Cm' in self.pretrain_tasks or 'Cm1' in self.pretrain_tasks:
