@@ -7,8 +7,7 @@ source ./scripts/utils.sh
 
 root_path="$(pwd)/../../../.."
 export PYTHONPATH="$root_path/":$PYTHONPATH
-#datasets="esol freesolv lipophilicity"
-datasets="esol"
+datasets="esol freesolv lipophilicity"
 compound_encoder_config="model_configs/geognn_l8.json"
 init_model="./pretrain_models/pretrain_models/class.pdparams"
 log_prefix="./log/finetune/regr/pretrain"
@@ -76,8 +75,7 @@ source ./scripts/utils.sh
 
 root_path="$(pwd)/../../../.."
 export PYTHONPATH="$root_path/":$PYTHONPATH
-#datasets="bace sider tox21 toxcast"
-datasets="bace"
+datasets="bace sider tox21 toxcast"
 compound_encoder_config="model_configs/geognn_l8.json"
 init_model="./pretrain_models/pretrain_models/regr.pdparams"
 log_prefix="./log/finetune/class/pretrain"
