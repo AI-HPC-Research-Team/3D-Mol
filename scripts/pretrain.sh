@@ -18,7 +18,7 @@ compound_encoder_config="model_configs/geognn_l8.json"
 model_config="model_configs/pretrain_gem.json"
 data_path="./demo_zinc_smiles"
 cached_data_path="./cached_data/pubchem"
-python pretrain_all.py \
+python pretrain.py \
     --cached_data_path=$cached_data_path \
 		--batch_size=128 \
 		--num_workers=96 \
@@ -29,4 +29,4 @@ python pretrain_all.py \
 		--data_path=$data_path \
 		--compound_encoder_config=$compound_encoder_config \
 		--model_config=$model_config \
-		--model_dir=./pretrain_model
+		--model_dir=./pretrain_models
