@@ -413,48 +413,7 @@ class Compound3DKit(object):
         return atom_poses
 
     @staticmethod
-    def get_MMFF_atom_poses(mol, numConfs=None, return_energy=False, return_conf=False):
-        """the atoms of mol will be changed in some cases."""
-        try:
-            new_mol = Chem.AddHs(mol)
-            res = AllChem.EmbedMultipleConfs(new_mol, numConfs=numConfs)
-            ### MMFF generates multiple conformations
-            res = AllChem.MMFFOptimizeMoleculeConfs(new_mol)
-            new_mol = Chem.RemoveHs(new_mol)
-            index = np.argmin([x[1] for x in res])
-            energy = res[index][1]
-            conf = new_mol.GetConformer(id=int(index))
-        except:
-            # print("error1")
-            # return None
-            new_mol = mol
-            AllChem.Compute2DCoords(new_mol)
-            energy = 0
-            conf = new_mol.GetConformer()
-
-        atom_poses = Compound3DKit.get_atom_poses(new_mol, conf)
-        a = [new_mol, atom_poses]
-        if return_energy:
-            a.append(energy)
-        if return_conf:
-            a.append(conf)
-        return a
-
-    @staticmethod
-    def get_2d_atom_poses(mol, numConfs=None, return_energy=False, return_conf=False):
-        """get 2d atom poses"""
-        AllChem.Compute2DCoords(mol)
-        conf = mol.GetConformer()
-        atom_poses = Compound3DKit.get_atom_poses(mol, conf)
-        a = [mol, atom_poses]
-        if return_energy:
-            a.append(0)
-        if return_conf:
-            a.append(conf)
-        return a
-
-    @staticmethod
-    def get_MMFF_atom_poses_cl(mol, numConfs=None, return_energy=False, return_conf=False):
+    def get_MMFF_atom_info(mol, numConfs=None, return_energy=False, return_conf=False):
         """the atoms of mol will be changed in some cases."""
         try:
             new_mol = Chem.AddHs(mol)
@@ -477,8 +436,8 @@ class Compound3DKit(object):
             whim_fp_0 = np.array(rdMolDescriptors.CalcWHIM(new_mol, confId=int(index)), "float32")
             whim_fp_1 = np.array(rdMolDescriptors.CalcWHIM(new_mol, confId=int(index_1)), "float32")
 
-            getaway_fp_0 = np.array(rdMolDescriptors.CalcGETAWAY(new_mol, confId=int(index)), "float32")
-            getaway_fp_1 = np.array(rdMolDescriptors.CalcGETAWAY(new_mol, confId=int(index_1)), "float32")
+#            getaway_fp_0 = np.array(rdMolDescriptors.CalcGETAWAY(new_mol, confId=int(index)), "float32")
+#            getaway_fp_1 = np.array(rdMolDescriptors.CalcGETAWAY(new_mol, confId=int(index_1)), "float32")
 
             new_mol = Chem.RemoveHs(new_mol)
             energy, energy_1 = res[index][1], res[index_1][1]
@@ -499,22 +458,32 @@ class Compound3DKit(object):
             morse_fp_1 = morse_fp_0
             whim_fp_0 = np.array(rdMolDescriptors.CalcWHIM(new_mol), "float32")
             whim_fp_1 = whim_fp_0
-            getaway_fp_0 = np.array(rdMolDescriptors.CalcGETAWAY(new_mol), "float32")
-            getaway_fp_1 = getaway_fp_0
+#            getaway_fp_0 = np.array(rdMolDescriptors.CalcGETAWAY(new_mol), "float64")
+#            getaway_fp_1 = getaway_fp_0
 
         fp3D = {
             "rdf": [rdf_fp_0, rdf_fp_1],
             "autocorr3d": [autocorr3d_fp_0, autocorr3d_fp_1],
             "morse": [morse_fp_0, morse_fp_1],
             "whim": [whim_fp_0, whim_fp_1],
-            "getaway": [getaway_fp_0, getaway_fp_1]
+#            "getaway": [getaway_fp_0, getaway_fp_1]
         }
 
 
         atom_poses = Compound3DKit.get_atom_poses(new_mol, conf)
         atom_poses_1 = Compound3DKit.get_atom_poses(new_mol, conf_1)
-        a = [new_mol, conf, conf_1, rms, atom_poses, atom_poses_1, energy, energy_1, fp3D]
+        a = [new_mol, conf, conf_1, atom_poses, atom_poses_1, energy, energy_1, fp3D]
         return a
+
+
+    @staticmethod
+    def get_bond_lengths(edges, atom_poses):
+        """get bond lengths"""
+        bond_lengths = []
+        for src_node_i, tar_node_j in edges:
+            bond_lengths.append(np.linalg.norm(atom_poses[tar_node_j] - atom_poses[src_node_i]))
+        bond_lengths = np.array(bond_lengths, 'float32')
+        return bond_lengths
 
 
     @staticmethod
@@ -791,10 +760,23 @@ def mol_to_geognn_graph_data(mol, atom_poses, conf, dir_type, total=False, cl=Fa
 
 def mol_to_geognn_graph_data_MMFF3d(mol, total=False, dihes=True):
     """tbd"""
-    b, fp3D = Compound3DKit.get_MMFF_atom_poses_cl(mol, numConfs=10, return_conf=dihes)
+    b = Compound3DKit.get_MMFF_atom_info(mol, numConfs=10, return_conf=dihes)
     if b is None:
         return None
-    mol, conf, conf_1, rms, atom_poses, atom_poses_1, energy, energy_1 = b
-    data = mol_to_geognn_graph_data_all(mol, atom_poses, conf, dir_type='HT', total=False)
-    data_1 = mol_to_geognn_graph_data_all(mol, atom_poses_1, conf_1, dir_type='HT', total=False)
-    return data, data_1, rms, energy, energy_1, fp3D
+    mol, conf, conf_1, atom_poses, atom_poses_1, energy, energy_1, fp3D = b
+    data = mol_to_geognn_graph_data(mol, atom_poses, conf, dir_type='HT', total=False)
+    data_1 = mol_to_geognn_graph_data(mol, atom_poses_1, conf_1, dir_type='HT', total=False)
+    data['energy'] = energy
+    data['energy_1'] = energy_1
+    return data, data_1, fp3D
+
+
+def mol_to_geognn_graph_data_MMFF3d_finetune(mol, total=False, dihes=True):
+    """tbd"""
+    b = Compound3DKit.get_MMFF_atom_info(mol, numConfs=10, return_conf=dihes)
+    if b is None:
+        return None
+    mol, conf, conf_1, atom_poses, atom_poses_1, energy, energy_1, fp3D = b
+    data = mol_to_geognn_graph_data(mol, atom_poses, conf, dir_type='HT', total=False)
+    data['energy'] = energy
+    return data
