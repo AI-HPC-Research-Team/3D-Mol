@@ -7,9 +7,10 @@ source ./scripts/utils.sh
 
 root_path="$(pwd)/../../../.."
 export PYTHONPATH="$root_path/":$PYTHONPATH
-atasets="esol freesolv lipophilicity"
+#datasets="esol freesolv lipophilicity"
+datasets="esol"
 compound_encoder_config="model_configs/geognn_l8.json"
-init_model="./pretrain_model/pretrain_models/class.pdparams"
+init_model="./pretrain_models/pretrain_models/class.pdparams"
 log_prefix="./log/finetune/regr/pretrain"
 thread_num=3
 count=0
@@ -25,8 +26,8 @@ for dataset in $datasets; do
 		batch_size=32
 	fi
 	model_config_list="model_configs/down_mlp2.json model_configs/down_mlp3.json"
-	lrs_list="1e-3,4e-3 1e-3,1e-3 4e-4,4e-3 4e-4,1e-3 4e-4,4e-4 1e-4,4e-3 1e-4,1e-3 1e-4,4e-4"
-	drop_list="0.1 0.2 0.5"
+	lrs_list="1e-3,4e-4 1e-3,1e-4 4e-4,4e-4 4e-4,1e-4"
+	drop_list="0.2 0.5"
 	for model_config in $model_config_list; do
 		for lrs in $lrs_list; do
 			IFS=, read -r -a array <<< "$lrs"
@@ -39,7 +40,7 @@ for dataset in $datasets; do
 				mkdir -p $log_dir
 				for time in $(seq 3); do
 					{
-						CUDA_VISIBLE_DEVICES=0 python finetune_regr_all.py \
+						CUDA_VISIBLE_DEVICES=0 python finetune_regr.py \
 								--batch_size=32 \
 								--max_epoch=100 \
 								--dataset_name=$dataset \
@@ -75,9 +76,10 @@ source ./scripts/utils.sh
 
 root_path="$(pwd)/../../../.."
 export PYTHONPATH="$root_path/":$PYTHONPATH
-datasets="bace sider tox21 toxcast"
+#datasets="bace sider tox21 toxcast"
+datasets="bace"
 compound_encoder_config="model_configs/geognn_l8.json"
-init_model="./pretrain_model/pretrain_models/regr.pdparams"
+init_model="./pretrain_models/pretrain_models/regr.pdparams"
 log_prefix="./log/finetune/class/pretrain"
 thread_num=3
 count=0
@@ -86,8 +88,8 @@ for dataset in $datasets; do
 	data_path="./downstream_datasets/$dataset"
 	cached_data_path="./cached_data/$dataset"
 	model_config_list="model_configs/down_mlp2.json model_configs/down_mlp3.json"
-	lrs_list="1e-3,4e-3 1e-3,1e-3 4e-4,4e-3 4e-4,1e-3 4e-4,4e-4 1e-4,4e-3 1e-4,1e-3 1e-4,4e-4"
-	drop_list="0.1 0.2 0.5"
+	lrs_list="1e-3,4e-4 1e-3,1e-4 4e-4,4e-4 4e-4,1e-4"
+	drop_list="0.2 0.5"
 	if [ "$dataset" == "sider" ]; then
 		batch_size=16
 	elif [ "$dataset" == "bbbp" ]; then
@@ -107,7 +109,7 @@ for dataset in $datasets; do
 				mkdir -p $log_dir
 				for time in $(seq 3); do
 					{
-						CUDA_VISIBLE_DEVICES=0 python finetune_class_all.py \
+						CUDA_VISIBLE_DEVICES=0 python finetune_class.py \
 								--batch_size=$batch_size \
 								--max_epoch=100 \
 								--dataset_name=$dataset \
