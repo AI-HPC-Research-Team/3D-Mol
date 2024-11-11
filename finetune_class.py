@@ -143,15 +143,15 @@ def main(args):
     if args.task == 'data':
         print('Preprocessing data...')
         dataset = get_dataset(args.dataset_name, args.data_path, task_names)
-        dataset.transform(DownstreamTransformFn(pt_model_config['pretrain_tasks'], pt_model_config['mask_ratio']), num_workers=args.num_workers)
-        a_temp = dataset._none_remove()
+        dataset.transform(DownstreamTransformFn())
+        dataset._none_remove()
         dataset.save_data(args.cached_data_path)
         return
     else:
         if args.cached_data_path is None or args.cached_data_path == "":
             print('Processing data...')
             dataset = get_dataset(args.dataset_name, args.data_path, task_names)
-            dataset.transform(DownstreamTransformFn(model_config['pretrain_tasks'], model_config['mask_ratio']), num_workers=args.num_workers)
+            dataset.transform(DownstreamTransformFn())
         else:
             print('Read preprocessing data...')
             dataset = InMemoryDataset(npz_data_path=args.cached_data_path)
