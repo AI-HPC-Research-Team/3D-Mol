@@ -25,9 +25,8 @@ from rdkit.Chem import AllChem
 from rdkit.Chem import rdDistGeom as molDG
 from sklearn.metrics import pairwise_distances
 import hashlib
-from utils.compound_tools import mol_to_geognn_graph_data_MMFF3d
+from utils.compound_tools import mol_to_geognn_graph_data_MMFF3d_finetune
 
-from utils.compound_constants import DAY_LIGHT_FG_SMARTS_LIST, DAY_LIGHT_FG_SMARTS_LIST_1, DAY_LIGHT_FG_SMARTS_LIST_1_1
 from rdkit import Chem, DataStructs
 from rdkit.Chem import AllChem
 import random
@@ -36,8 +35,6 @@ import copy
 warnings.filterwarnings("ignore", message='not removing hydrogen atom with dummy atom neighbors')
 warnings.filterwarnings("ignore", message='non-ring atom 0 marked aromatic')
 warnings.filterwarnings("ignore", message="Can't kekulize mol.  Unkekulized atoms: 0 3 4")
-
-day_light_fg_smarts_list_fg = []
 
 
 class DownstreamTransformFn(object):
@@ -60,7 +57,7 @@ class DownstreamTransformFn(object):
         mol = AllChem.MolFromSmiles(smiles)
         if mol is None:
             return None
-        data = mol_to_geognn_graph_data_MMFF3d(mol)
+        data = mol_to_geognn_graph_data_MMFF3d_finetune(mol)
         if data is None:
             return None
         if not self.is_inference:
@@ -164,7 +161,7 @@ class DownstreamCollateFn(object):
         # TODO: append default mol
         smiles = "CCC(C)C"
         mol_default = Chem.MolFromSmiles(smiles)
-        mol_default_3d = mol_to_geognn_graph_data_MMFF3d_all(mol_default)
+        mol_default_3d = mol_to_geognn_graph_data_MMFF3d_finetune(mol_default)
         
         ab_g_default = pgl.Graph(
             num_nodes=len(mol_default_3d[self.atom_names[0]]),
@@ -194,14 +191,14 @@ class DownstreamCollateFn(object):
 
         atom_bond_graph = pgl.Graph.batch(atom_bond_graph_list)
         bond_angle_graph = pgl.Graph.batch(bond_angle_graph_list)
-        dihes_angle_graph_list = pgl.Graph.batch(dihes_angle_graph_list)
+        dihes_angle_graph = pgl.Graph.batch(dihes_angle_graph_list)
         # TODO: reshape due to pgl limitations on the shape
         self._flat_shapes(atom_bond_graph.node_feat)
         self._flat_shapes(atom_bond_graph.edge_feat)
         self._flat_shapes(bond_angle_graph.node_feat)
         self._flat_shapes(bond_angle_graph.edge_feat)
-        self._flat_shapes(dihes_angle_graph_list.node_feat)
-        self._flat_shapes(dihes_angle_graph_list.edge_feat)
+        self._flat_shapes(dihes_angle_graph.node_feat)
+        self._flat_shapes(dihes_angle_graph.edge_feat)
 
         if not self.is_inference:
             if self.task_type == 'class':
@@ -209,10 +206,10 @@ class DownstreamCollateFn(object):
                 # label: -1 -> 0, 1 -> 1
                 labels = ((labels + 1.0) / 2)
                 valids = (labels != 0.5)
-                return [atom_bond_graph, bond_angle_graph, dihes_angle_graph_list, valids, labels]
+                return [atom_bond_graph, bond_angle_graph, dihes_angle_graph, valids, labels]
             else:
                 labels = np.array(label_list, 'float32')
-                return atom_bond_graph, bond_angle_graph, dihes_angle_graph_list, labels
+                return atom_bond_graph, bond_angle_graph, dihes_angle_graph, labels
         else:
-            return atom_bond_graph, bond_angle_graph, dihes_angle_graph_list
+            return atom_bond_graph, bond_angle_graph, dihes_angle_graph
 
