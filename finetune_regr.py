@@ -149,16 +149,16 @@ def main(args):
     if args.task == 'data':
         print('Preprocessing data...')
         dataset = get_dataset(args.dataset_name, args.data_path, task_names)
-        transform_fn = DownstreamTransformFn(pt_model_config['pretrain_tasks'], pt_model_config['mask_ratio'])
+        transform_fn = DownstreamTransformFn()
         dataset.transform(transform_fn, num_workers=args.num_workers)
-        a_temp = dataset._clean()
+        dataset._none_remove()
         dataset.save_data(args.cached_data_path)
         return
     else:
         if args.cached_data_path is None or args.cached_data_path == "":
             print('Processing data...')
             dataset = get_dataset(args.dataset_name, args.data_path, task_names)
-            transform_fn = DownstreamTransformFn(model_config['pretrain_tasks'], model_config['mask_ratio'])
+            transform_fn = DownstreamTransformFn()
             dataset.transform(transform_fn, num_workers=args.num_workers)
         else:
             print('Read preprocessing data...')
@@ -171,7 +171,7 @@ def main(args):
 
     ### build model
     compound_encoder = GeoGNNModel(compound_encoder_config)
-    model = DownstreamModel(model_config, compound_encoder_all)
+    model = DownstreamModel(model_config, compound_encoder)
     if metric == 'square':
         criterion = nn.MSELoss()
     else:
